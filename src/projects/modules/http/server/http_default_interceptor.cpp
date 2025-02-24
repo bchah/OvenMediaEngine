@@ -38,6 +38,12 @@ namespace http
 
 			if (error == nullptr)
 			{
+				// if mehotd == GET, set HEAD automatically
+				if (HTTP_CHECK_METHOD(method, Method::Get))
+				{
+					method |= Method::Head;
+				}
+
 				_request_handler_list.push_back((RequestInfo) {
 #if DEBUG
 					.pattern_string = whole_pattern,
@@ -59,6 +65,11 @@ namespace http
 		bool DefaultInterceptor::IsInterceptorForRequest(const std::shared_ptr<const HttpExchange> &client)
 		{
 			// Process all requests because this is a default interceptor
+			return true;
+		}
+
+		bool DefaultInterceptor::IsCacheable() const
+		{
 			return true;
 		}
 

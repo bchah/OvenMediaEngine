@@ -12,14 +12,47 @@
 #include "../../transcoder_private.h"
 #include "base/info/application.h"
 
-bool DecoderAVCxNV::Configure(std::shared_ptr<MediaTrack> context)
+bool DecoderAVCxNV::InitCodec()
 {
-	if (TranscodeDecoder::Configure(context) == false)
+	const AVCodec *_codec = ::avcodec_find_decoder_by_name("h264_cuvid");
+	if (_codec == nullptr)
 	{
+		logte("Codec not found: %s", ffmpeg::Conv::GetCodecName(GetCodecID()).CStr());
 		return false;
 	}
 
-	// Initialize H.264 stream parser
+	_context = ::avcodec_alloc_context3(_codec);
+	if (_context == nullptr)
+	{
+		logte("Could not allocate codec context for %s", ffmpeg::Conv::GetCodecName(GetCodecID()).CStr());
+		return false;
+	}
+
+	_context->time_base = ffmpeg::Conv::TimebaseToAVRational(GetTimebase());
+	_context->pkt_timebase = ffmpeg::Conv::TimebaseToAVRational(GetTimebase());
+	_context->flags |= AV_CODEC_FLAG_LOW_DELAY;
+
+	// Get hardware device context
+	auto hw_device_ctx = TranscodeGPU::GetInstance()->GetDeviceContext(cmn::MediaCodecModuleId::NVENC, GetRefTrack()->GetCodecDeviceId());
+	if (hw_device_ctx == nullptr)
+	{
+		logte("Could not get hw device context for %s", ffmpeg::Conv::GetCodecName(GetCodecID()).CStr());
+		return false;
+	}
+
+	// Assign HW device context to decoder
+	if (ffmpeg::Conv::SetHwDeviceCtxOfAVCodecContext(_context, hw_device_ctx) == false)
+	{
+		logte("Could not set hw device context for %s", ffmpeg::Conv::GetCodecName(GetCodecID()).CStr());
+		return false;
+	}
+
+	if (::avcodec_open2(_context, _codec, nullptr) < 0)
+	{
+		logte("Could not open codec: %s", ffmpeg::Conv::GetCodecName(GetCodecID()).CStr());
+		return false;
+	}
+
 	_parser = ::av_parser_init(GetCodecID());
 	if (_parser == nullptr)
 	{
@@ -28,75 +61,53 @@ bool DecoderAVCxNV::Configure(std::shared_ptr<MediaTrack> context)
 	}
 	_parser->flags |= PARSER_FLAG_COMPLETE_FRAMES;
 
-	if (InitCodec() == false)
-	{
-		return false;
-	}
-
-	try
-	{
-		_kill_flag = false;
-
-		_codec_thread = std::thread(&TranscodeDecoder::CodecThread, this);
-		pthread_setname_np(_codec_thread.native_handle(), ov::String::FormatString("Dec%sNV", avcodec_get_name(GetCodecID())).CStr());
-	}
-	catch (const std::system_error &e)
-	{
-		logte("Failed to start decoder thread");
-		_kill_flag = true;
-
-		return false;
-	}
-
-	return true;
-}
-
-bool DecoderAVCxNV::InitCodec()
-{
-	const AVCodec *_codec = ::avcodec_find_decoder_by_name("h264_cuvid");
-	if (_codec == nullptr)
-	{
-		logte("Codec not found: %s (%d)", ::avcodec_get_name(GetCodecID()), GetCodecID());
-		return false;
-	}
-
-	_context = ::avcodec_alloc_context3(_codec);
-	if (_context == nullptr)
-	{
-		logte("Could not allocate codec context for %s (%d)", ::avcodec_get_name(GetCodecID()), GetCodecID());
-		return false;
-	}
-
-	_context->hw_device_ctx = ::av_buffer_ref(TranscodeGPU::GetInstance()->GetDeviceContext(cmn::MediaCodecModuleId::NVENC, _track->GetCodecDeviceId()));
-	if(_context->hw_device_ctx == nullptr)
-	{
-		logte("Could not allocate hw device context for %s (%d)", ::avcodec_get_name(GetCodecID()), GetCodecID());
-		return false;
-	}
-
-	_context->time_base = ffmpeg::Conv::TimebaseToAVRational(GetTimebase());
-	_context->pkt_timebase = ffmpeg::Conv::TimebaseToAVRational(GetTimebase());
-	_context->flags |= AV_CODEC_FLAG_LOW_DELAY;
-
-	if (::avcodec_open2(_context, _codec, nullptr) < 0)
-	{
-		logte("Could not open codec: %s (%d)", ::avcodec_get_name(GetCodecID()), GetCodecID());
-		return false;
-	}
+	_change_format = false;
 
 	return true;
 }
 
 void DecoderAVCxNV::UninitCodec()
 {
-	::avcodec_close(_context);
-	::avcodec_free_context(&_context);
-
+	if (_context != nullptr)
+	{
+		::avcodec_free_context(&_context);
+	}
 	_context = nullptr;
+
+	if (_parser != nullptr)
+	{
+		::av_parser_close(_parser);
+	}
+	_parser = nullptr;
+}
+
+bool DecoderAVCxNV::ReinitCodecIfNeed()
+{
+	// NVIDIA H.264 decoder does not support dynamic resolution streams. (e.g. WebRTC)
+	// So, when a resolution change is detected, the codec is reset and recreated.
+	if (_context->width != 0 && _context->height != 0 && (_parser->width != _context->width || _parser->height != _context->height))
+	{
+		logti("Changed input resolution of %u track. (%dx%d -> %dx%d)", GetRefTrack()->GetId(), _context->width, _context->height, _parser->width, _parser->height);
+
+		UninitCodec();
+
+		if (InitCodec() == false)
+		{
+			return false;
+		}
+	}
+
+	return true;
 }
 
 void DecoderAVCxNV::CodecThread()
 {
+	// Initialize the codec and notify the main thread.
+	if(_codec_init_event.Submit(InitCodec()) == false)
+	{
+		return;
+	}
+	
 	while (!_kill_flag)
 	{
 		auto obj = _input_buffer.Dequeue();
@@ -128,18 +139,9 @@ void DecoderAVCxNV::CodecThread()
 				break;
 			}
 
-			// NVIDIA H.264 decoder does not support dynamic resolution streams. (e.g. WebRTC)
-			// So, when a resolution change is detected, the codec is reset and recreated.
-			if (_context->width != 0 && _context->height != 0 && (_parser->width != _context->width || _parser->height != _context->height))
+			if (ReinitCodecIfNeed() == false)
 			{
-				logti("Changed input resolution of %u track. (%dx%d -> %dx%d)", GetRefTrack()->GetId(), _context->width, _context->height, _parser->width, _parser->height);
-				
-				UninitCodec();
-
-				if(InitCodec() == false)
-				{
-					break;
-				}
+				break;
 			}
 
 			///////////////////////////////
@@ -158,8 +160,18 @@ void DecoderAVCxNV::CodecThread()
 					_pkt->duration = duration;
 				}
 
-				int ret = ::avcodec_send_packet(_context, _pkt);
+				// Keyframe Decode Only
+				// If set to decode only key frames, non-keyframe packets are dropped.
+				if(GetRefTrack()->IsKeyframeDecodeOnly() == true)
+				{
+					// Drop non-keyframe packets
+					if (!(_pkt->flags & AV_PKT_FLAG_KEY))
+					{
+						break;
+					}
+				}
 
+				int ret = ::avcodec_send_packet(_context, _pkt);
 				if (ret == AVERROR(EAGAIN))
 				{
 					// Need more data
@@ -235,11 +247,9 @@ void DecoderAVCxNV::CodecThread()
 					if (ret == 0)
 					{
 						auto codec_info = ffmpeg::Conv::CodecInfoToString(_context, _codec_par);
+
 						logti("[%s/%s(%u)] input stream information: %s",
-							  _stream_info.GetApplicationInfo().GetName().CStr(),
-							  _stream_info.GetName().CStr(),
-							  _stream_info.GetId(),
-							  codec_info.CStr());
+							  _stream_info.GetApplicationInfo().GetVHostAppName().CStr(), _stream_info.GetName().CStr(), _stream_info.GetId(), codec_info.CStr());
 
 						_change_format = true;
 
@@ -252,40 +262,21 @@ void DecoderAVCxNV::CodecThread()
 					}
 				}
 
-				AVFrame *sw_frame = ::av_frame_alloc();
-				AVFrame *tmp_frame = NULL;
-				if (_frame->format == AV_PIX_FMT_CUDA)
-				{
-					// retrieve data from GPU to CPU ( CUDA -> NV12 )
-					if ((ret = ::av_hwframe_transfer_data(sw_frame, _frame, 0)) < 0)
-					{
-						logte("Error transferring the data to system memory\n");
-						continue;
-					}
-					tmp_frame = sw_frame;
-				}
-				else
-				{
-					tmp_frame = _frame;
-				}
-				tmp_frame->pts = _frame->pts;
-
 				// If there is no duration, the duration is calculated by framerate and timebase.
-				if(_frame->pkt_duration <= 0LL && _context->framerate.num > 0 && _context->framerate.den > 0)
+				if (_frame->pkt_duration <= 0LL && _context->framerate.num > 0 && _context->framerate.den > 0)
 				{
-					_frame->pkt_duration = (int64_t)( ((double)_context->framerate.den / (double)_context->framerate.num) / ((double) GetRefTrack()->GetTimeBase().GetNum() / (double) GetRefTrack()->GetTimeBase().GetDen()) );
+					_frame->pkt_duration = (int64_t)(((double)_context->framerate.den / (double)_context->framerate.num) / (double)GetRefTrack()->GetTimeBase().GetExpr());
 				}
 
-				auto decoded_frame = ffmpeg::Conv::ToMediaFrame(cmn::MediaType::Video, tmp_frame);
+				auto decoded_frame = ffmpeg::Conv::ToMediaFrame(cmn::MediaType::Video, _frame);
 				if (decoded_frame == nullptr)
 				{
 					continue;
 				}
 
 				::av_frame_unref(_frame);
-				::av_frame_free(&sw_frame);
 
-				SendOutputBuffer(need_to_change_notify ? TranscodeResult::FormatChanged : TranscodeResult::DataReady, std::move(decoded_frame));
+				Complete(need_to_change_notify ? TranscodeResult::FormatChanged : TranscodeResult::DataReady, std::move(decoded_frame));
 			}
 		}
 	}

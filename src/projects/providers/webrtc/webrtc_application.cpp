@@ -10,7 +10,7 @@
 #include "webrtc_private.h"
 #include "webrtc_application.h"
 
-#include <modules/rtp_rtcp/rtp_header_extension/rtp_header_extension_transport_cc.h>
+#include <modules/rtp_rtcp/rtp_header_extension/rtp_header_extension.h>
 
 namespace pvd
 {
@@ -38,7 +38,7 @@ namespace pvd
 
 		if(_certificate == nullptr || _offer_sdp == nullptr)
 		{
-			logte("Failed to generate certificate and offer SDP. Could not start %s/s", GetApplicationTypeName(), GetName().CStr());
+			logte("Failed to generate certificate and offer SDP. Could not start %s/s", GetApplicationTypeName(), GetVHostAppName().CStr());
 			return false;
 		}
 
@@ -63,9 +63,11 @@ namespace pvd
 		}
 
 		bool transport_cc_enabled = true;
+		bool composition_time_enabled = true;
 
-		auto offer_sdp = std::make_shared<SessionDescription>();
+		auto offer_sdp = std::make_shared<SessionDescription>(SessionDescription::SdpType::Offer);
 		offer_sdp->SetOrigin("OvenMediaEngine", ov::Random::GenerateUInt32(), 2, "IN", 4, "127.0.0.1");
+		offer_sdp->SetExtmapAllowMixed(true);
 		offer_sdp->SetTiming(0, 0);
 		offer_sdp->SetIceOption("trickle");
 		offer_sdp->SetIceUfrag(ov::Random::GenerateString(8));
@@ -95,6 +97,11 @@ namespace pvd
 		if (transport_cc_enabled)
 		{
 			video_media_desc->AddExtmap(RTP_HEADER_EXTENSION_TRANSPORT_CC_ID, RTP_HEADER_EXTENSION_TRANSPORT_CC_ATTRIBUTE);
+		}
+
+		if (composition_time_enabled)
+		{
+			video_media_desc->AddExtmap(RTP_HEADER_EXTENSION_COMPOSITION_TIME_ID, RTP_HEADER_EXTENSION_COMPOSITION_TIME_ATTRIBUTE);
 		}
 
 		std::shared_ptr<PayloadAttr> payload;
@@ -168,10 +175,11 @@ namespace pvd
 			return nullptr;
 		}
 
-		auto answer_sdp = std::make_shared<SessionDescription>();
+		auto answer_sdp = std::make_shared<SessionDescription>(SessionDescription::SdpType::Answer);
 		answer_sdp->SetOrigin("OvenMediaEngine", ov::Random::GenerateUInt32(), 2, "IN", 4, "127.0.0.1");
 		answer_sdp->SetTiming(0, 0);
-
+		answer_sdp->SetExtmapAllowMixed(offer_sdp->GetExtmapAllowMixed());
+		
 		// msid-semantic, only add if offer has msid-semantic
 		ov::String msid_semantic;
 		if (offer_sdp->GetMsidSemantic().IsEmpty() == false)
@@ -228,14 +236,19 @@ namespace pvd
 			// mid
 			answer_media_desc->SetMid(offer_media_desc->GetMid());
 
-			// extmaps : now only support transport-cc
-
 			// transport-cc
 			uint8_t extmap_id = 0;
+			uint8_t new_extmap_id = 1;
 			ov::String extmap_attribute;
 			if (offer_media_desc->FindExtmapItem("transport-wide-cc", extmap_id, extmap_attribute))
 			{
-				answer_media_desc->AddExtmap(extmap_id, extmap_attribute);
+				answer_media_desc->AddExtmap(new_extmap_id++, extmap_attribute);
+			}
+
+			// CompositionTime
+			if (offer_media_desc->FindExtmapItem("uri:ietf:rtc:rtp-hdrext:video:CompositionTime", extmap_id, extmap_attribute))
+			{
+				answer_media_desc->AddExtmap(new_extmap_id++, extmap_attribute);
 			}
 
 			// a=candidate

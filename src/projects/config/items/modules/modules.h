@@ -12,6 +12,8 @@
 #include "ll_hls.h"
 #include "p2p.h"
 #include "recovery.h"
+#include "dynamic_app_removal.h"
+#include "etag.h"
 
 namespace cfg
 {
@@ -24,12 +26,16 @@ namespace cfg
 			LLHls _ll_hls;
 			P2P _p2p;
 			Recovery _recovery;
+			DynamicAppRemoval _dynamic_app_removal;
+			ETag _etag;
 
 		public:
 			CFG_DECLARE_CONST_REF_GETTER_OF(GetHttp2, _http2)
 			CFG_DECLARE_CONST_REF_GETTER_OF(GetLLHls, _ll_hls)
 			CFG_DECLARE_CONST_REF_GETTER_OF(GetP2P, _p2p)
 			CFG_DECLARE_CONST_REF_GETTER_OF(GetRecovery, _recovery)
+			CFG_DECLARE_CONST_REF_GETTER_OF(GetDynamicAppRemoval, _dynamic_app_removal)
+			CFG_DECLARE_CONST_REF_GETTER_OF(GetETag, _etag)
 
 		protected:
 			void MakeList() override
@@ -38,6 +44,8 @@ namespace cfg
 				Register<Optional>("LLHLS", &_ll_hls);
 				Register<Optional>({"P2P", "p2p"}, &_p2p);
 				Register<Optional>("Recovery", &_recovery);
+				Register<Optional>("DynamicAppRemoval", &_dynamic_app_removal);
+				Register<Optional>("ETag", &_etag);
 			}
 		};
 	}  // namespace modules

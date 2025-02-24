@@ -20,6 +20,8 @@ MediaTrack::MediaTrack()
 	  _media_type(MediaType::Unknown),
 	  _codec_id(MediaCodecId::None),
 	  _codec_module_id(cmn::MediaCodecModuleId::None),
+	  _codec_device_id(0),
+	  _codec_modules(""),
 	  _bitrate(0),
 	  _bitrate_conf(0),
 	  _byass(false),
@@ -302,8 +304,9 @@ ov::String MediaTrack::GetInfoString()
 				"Codec(%d,%s,%s:%d) "
 				"BSF(%s) "
 				"Resolution(%dx%d) "
-				"Framerate(%.2ffps) "
-				"KeyInterval(%d) "
+				"Framerate(%.2f) "
+				"KeyInterval(%d/%s) "
+				"SkipFrames(%d) "
 				"BFrames(%d) ",
 				GetId(), GetPublicName().CStr(), GetVariantName().CStr(),
 				ov::Converter::BitToString(GetBitrate()).CStr(),
@@ -312,6 +315,8 @@ ov::String MediaTrack::GetInfoString()
 				GetWidth(), GetHeight(),
 				GetFrameRate(),
 				GetKeyFrameInterval(),
+				cmn::GetKeyFrameIntervalTypeToString(GetKeyFrameIntervalTypeByConfig()).LowerCaseString().CStr(),
+				GetSkipFramesByConfig(),
 				GetBFrames());
 			break;
 
@@ -420,7 +425,8 @@ bool MediaTrack::IsValid()
 		}
 		break;
 		case MediaCodecId::Jpeg:
-		case MediaCodecId::Png: {
+		case MediaCodecId::Png:
+		case MediaCodecId::Webp: {
 			if (_width > 0 &&
 				_height > 0 &&
 				_time_base.GetNum() > 0 &&
@@ -485,7 +491,8 @@ bool MediaTrack::HasQualityMeasured()
 	{
 		case MediaType::Video:
 		{
-			if (_bitrate > 0 &&	_framerate > 0.0)
+			// It can be used when the value is set in the provider or settings, or when it is measured.
+			if ((_bitrate > 0 || _bitrate_conf > 0) && (_framerate > 0.0 || _framerate_conf > 0.0))
 			{
 				_has_quality_measured = true;
 			}
@@ -494,7 +501,7 @@ bool MediaTrack::HasQualityMeasured()
 
 		case MediaType::Audio:
 		{
-			if (_bitrate > 0)
+			if (_bitrate > 0 || _bitrate_conf > 0)
 			{
 				_has_quality_measured = true;
 			}
@@ -516,10 +523,18 @@ void MediaTrack::OnFrameAdded(const std::shared_ptr<MediaPacket> &media_packet)
 		_clock_from_first_frame_received.Start();
 	}
 
+	if (_timer_one_second.IsStart() == false)
+	{
+		_timer_one_second.Start();
+	}
+
 	size_t bytes = media_packet->GetDataLength();
 
 	_total_frame_count++;
 	_total_frame_bytes += bytes;
+
+	_last_seconds_frame_count++;
+	_last_seconds_frame_bytes += bytes;
 
 	// If bitrate is not set, calculate bitrate
 	if (_clock_from_first_frame_received.IsElapsed(VALID_BITRATE_CALCULATION_THRESHOLD_MSEC))
@@ -527,32 +542,52 @@ void MediaTrack::OnFrameAdded(const std::shared_ptr<MediaPacket> &media_packet)
 		auto seconds = static_cast<double>(_clock_from_first_frame_received.Elapsed()) / 1000.0;
 		auto bytes_per_second = static_cast<double>(_total_frame_bytes) / seconds;
 		auto bitrate = static_cast<int32_t>(bytes_per_second * 8.0);
+
 		SetBitrateByMeasured(bitrate);
 
-		logtd("Track(%u) Bitrates(%s)", GetId(), ov::Converter::BitToString(bitrate).CStr());
-	}
-
-	// If framerate is not set, calculate framerate
-	if (_clock_from_first_frame_received.IsElapsed(VALID_BITRATE_CALCULATION_THRESHOLD_MSEC))
-	{
-		auto seconds = static_cast<double>(_clock_from_first_frame_received.Elapsed()) / 1000.0;
 		auto frame_count = static_cast<double>(_total_frame_count);
 		auto framerate = frame_count / seconds;
-		SetFrameRateByMeasured(framerate);
 
-		logtd("Track(%u) FPS(%f)", GetId(), framerate);
+		SetFrameRateByMeasured(framerate);
+	}
+
+	if (_timer_one_second.IsElapsed(1000))
+	{
+		// It can be greater than 1 second due to the delay of the timer or the processing time of the frame.
+		auto seconds = static_cast<double>(_timer_one_second.Elapsed()) / 1000.0;
+
+		auto bitrate = static_cast<int32_t>(_last_seconds_frame_bytes * 8) / seconds;
+		SetBitrateLastSecond(bitrate);
+
+		auto framerate = static_cast<double>(_last_seconds_frame_count) / seconds;
+		SetFrameRateLastSecond(framerate);
+
+		_last_seconds_frame_count = 0;
+		_last_seconds_frame_bytes = 0;
+
+		_timer_one_second.Restart();
 	}
 
 	if (GetMediaType() == cmn::MediaType::Video)
 	{
 		if (media_packet->GetFlag() == MediaPacketFlag::Key)
 		{
-			SetKeyFrameIntervalByMeasured(_key_frame_interval_count);
+			_total_key_frame_count++;
+			auto key_frame_interval_avg = static_cast<double>(_total_frame_count) / static_cast<double>(_total_key_frame_count);
+
+			// Average
+			SetKeyFrameIntervalByMeasured(key_frame_interval_avg);
+
+			// Lastest
+			SetKeyFrameIntervalLastet(_key_frame_interval_count);
 			_key_frame_interval_count = 1;
+			_delta_frame_count_since_last_key_frame = 0;
 		}
 		else if (_key_frame_interval_count > 0)
 		{
 			_key_frame_interval_count++;
+			_delta_frame_count_since_last_key_frame ++;
+			SetDeltaFrameCountSinceLastKeyFrame(_delta_frame_count_since_last_key_frame);
 		}
 	}
 }
@@ -585,7 +620,6 @@ int32_t MediaTrack::GetBitrate() const
 void MediaTrack::SetBitrateByMeasured(int32_t bitrate)
 {
 	_bitrate = bitrate;
-
 }
 
 int32_t MediaTrack::GetBitrateByMeasured() const
@@ -603,6 +637,16 @@ int32_t MediaTrack::GetBitrateByConfig() const
 	return _bitrate_conf;
 }
 
+void MediaTrack::SetBitrateLastSecond(int32_t bitrate)
+{
+	_bitrate_last_second = bitrate;
+}
+
+int32_t MediaTrack::GetBitrateLastSecond() const
+{
+	return _bitrate_last_second;
+}
+
 void MediaTrack::SetBypassByConfig(bool flag)
 {
 	_bypass_conf = flag;
@@ -615,51 +659,5 @@ bool MediaTrack::IsBypassByConf() const
 
 std::shared_ptr<MediaTrack> MediaTrack::Clone()
 {
-	auto track = std::make_shared<MediaTrack>();
-
-	// Media Track
-	track->_is_valid = _is_valid;
-	track->_has_quality_measured = _has_quality_measured;
-	track->_id = _id;
-	track->_variant_name = _variant_name;
-	track->_public_name = _public_name;
-	track->_language = _language;
-	track->_codec_id = _codec_id;
-	track->_codec_module_id = _codec_module_id;
-	track->_origin_bitstream_format = _origin_bitstream_format;	
-	track->_media_type = _media_type;
-	track->_time_base = _time_base;
-	track->_bitrate = _bitrate;
-	track->_bitrate_conf = _bitrate_conf;
-	track->_byass = _byass;
-	track->_bypass_conf = _bypass_conf;
-	track->_start_frame_time = _start_frame_time;
-	track->_last_frame_time = _last_frame_time;
-	track->_decoder_configuration_record = _decoder_configuration_record;
-	track->_total_frame_count = _total_frame_count;
-	track->_total_frame_bytes = _total_frame_bytes;
-
-	// Video Track
-	track->_framerate = _framerate;
-	track->_framerate_conf = _framerate_conf;
-	track->_framerate_estimated = _framerate_estimated;
-	track->_video_timescale = _video_timescale;
-	track->_width = _width;
-	track->_width_conf = _width_conf;
-	track->_height = _height;
-	track->_height_conf = _height_conf;
-	track->_key_frame_interval = _key_frame_interval;
-	track->_key_frame_interval_conf = _key_frame_interval_conf;
-	track->_b_frames = _b_frames;
-	track->_has_bframe = _has_bframe;
-	track->_preset = _preset;
-	track->_colorspace = _colorspace;
-
-	// Audio Track
-	track->_channel_layout = _channel_layout;
-	track->_sample = _sample;
-	track->_audio_timescale = _audio_timescale;
-	track->_audio_samples_per_frame= _audio_samples_per_frame;
-	
-	return track;
+	return std::make_shared<MediaTrack>(*this);
 }

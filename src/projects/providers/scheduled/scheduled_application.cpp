@@ -35,19 +35,9 @@ namespace pvd
 
     bool ScheduledApplication::Start()
     {
-        bool parsed = false;
-        auto config = GetConfig().GetProviders().GetScheduledProvider(&parsed);
-
-        if (parsed == false ||
-            config.GetMediaRootDir().IsEmpty() || 
-            config.GetScheduleFilesDir().IsEmpty())
-        {
-            logte("Could not create %s application for ScheduleProvider since invalid configuration", GetName().CStr());
-            return false;
-        }
-
-        _media_root_dir = ov::GetAbsolutePath(config.GetMediaRootDir());
-        _schedule_files_path = ov::GetAbsolutePath(config.GetScheduleFilesDir());
+        auto config = GetConfig().GetProviders().GetScheduledProvider();
+        _media_root_dir = ov::GetDirPath(config.GetMediaRootDir(), cfg::ConfigManager::GetInstance()->GetConfigPath());
+        _schedule_files_path = ov::GetDirPath(config.GetScheduleFilesDir(), cfg::ConfigManager::GetInstance()->GetConfigPath());
 
         _schedule_file_name_regex = ov::Regex::CompiledRegex(ov::Regex::WildCardRegex(ov::String::FormatString("*.%s", ScheduleFileExtension)));
         
@@ -75,7 +65,7 @@ namespace pvd
                 if (AddSchedule(schedule_file_info_from_dir) == true)
                 {
                     _schedule_file_info_db.emplace(schedule_file_info_from_dir._file_path.Hash(), schedule_file_info_from_dir);
-                    logti("Added schedule channel : %s/%s (%s)", GetName().CStr(), schedule_file_info_from_dir._schedule->GetStream().name.CStr(), schedule_file_info_from_dir._file_path.CStr());
+                    logti("Added schedule channel : %s/%s (%s)", GetVHostAppName().CStr(), schedule_file_info_from_dir._schedule->GetStream().name.CStr(), schedule_file_info_from_dir._file_path.CStr());
                 }
             }
             else
@@ -87,7 +77,7 @@ namespace pvd
                     if (UpdateSchedule(schedule_file_info_from_db, schedule_file_info_from_dir) == true)
                     {
                         _schedule_file_info_db[schedule_file_info_from_dir._file_path.Hash()] = schedule_file_info_from_dir;
-                        logti("Updated schedule channel : %s/%s (%s)", GetName().CStr(), schedule_file_info_from_dir._schedule->GetStream().name.CStr(), schedule_file_info_from_dir._file_path.CStr());
+                        logti("Updated schedule channel : %s/%s (%s)", GetVHostAppName().CStr(), schedule_file_info_from_dir._schedule->GetStream().name.CStr(), schedule_file_info_from_dir._file_path.CStr());
                     }
                 }
             }
@@ -111,7 +101,7 @@ namespace pvd
                 }
 
                 RemoveSchedule(schedule_file_info);
-                logti("Removed schedule channel : %s/%s (%s)", GetName().CStr(), schedule_file_info._schedule->GetStream().name.CStr(), schedule_file_info._file_path.CStr());
+                logti("Removed schedule channel : %s/%s (%s)", GetVHostAppName().CStr(), schedule_file_info._schedule->GetStream().name.CStr(), schedule_file_info._file_path.CStr());
 
                 it = _schedule_file_info_db.erase(it);
             }

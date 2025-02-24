@@ -143,6 +143,10 @@
 					<TcpRelayWorkerCount>1</TcpRelayWorkerCount>
 				</IceCandidates>
 			</WebRTC>
+			<SRT>
+				<Port>9998</Port>
+				<WorkerCount>1</WorkerCount>
+			</SRT>
 		</Publishers>
 	</Bind>
 
@@ -238,7 +242,7 @@
 
 				<Enables>
 					<Providers>rtmp,webrtc,srt</Providers>
-					<Publishers>webrtc,hls,llhls,dash,lldash</Publishers>
+					<Publishers>webrtc,llhls</Publishers>
 				</Enables>
 			</SignedPolicy>
 			-->
@@ -250,7 +254,7 @@
 				<Timeout>3000</Timeout>
 				<Enables>
 					<Providers>rtmp,webrtc,srt</Providers>
-					<Publishers>webrtc,hls,llhls,dash,lldash</Publishers>
+					<Publishers>webrtc,llhls</Publishers>
 				</Enables>
 			</AdmissionWebhooks>
 			-->
@@ -309,11 +313,17 @@
 					<!-- Application type (live/vod) -->
 					<Type>live</Type>
 					<OutputProfiles>
-						
-						<!--  This option is deprecated. Please use the 'HWAccels' option. -->
-						<!-- 
-							<HardwareAcceleration>false</HardwareAcceleration>
-						-->
+						<!-- Common setting for decoders. Decodes is optional. -->
+						<Decodes>
+							<!-- Number of threads for the decoder. -->
+							<ThreadCount>2</ThreadCount>
+							<!-- 
+							By default, OME decodes all video frames. 
+							With OnlyKeyframes, only keyframes are decoded, massively improving performance.
+							Thumbnails are generated only on keyframes, they may not generate at your requested fps!
+							-->
+							<OnlyKeyframes>false</OnlyKeyframes>
+						</Decodes>
 
 						<!-- Enable this configuration if you want to hardware acceleration using GPU -->
 						<HWAccels>
@@ -419,7 +429,7 @@
 									<Codec>h264</Codec>
 									<Bitrate>5024000</Bitrate>
 									<Width>1920</Width>
-									<Height>1280</Height>
+									<Height>1080</Height>
 									<Framerate>30</Framerate>
 									<KeyFrameInterval>30</KeyFrameInterval>
 									<BFrames>0</BFrames>
@@ -526,6 +536,7 @@
 							<Rtx>false</Rtx>
 							<Ulpfec>false</Ulpfec>
 							<JitterBuffer>false</JitterBuffer>
+							<CreateDefaultPlaylist>true</CreateDefaultPlaylist>
 						</WebRTC>
 						<LLHLS>
 							<ChunkDuration>0.5</ChunkDuration>
@@ -545,7 +556,43 @@
 							<CrossDomains>
 								<Url>*</Url>
 							</CrossDomains>
+							<CreateDefaultPlaylist>true</CreateDefaultPlaylist> <!-- llhls.m3u8 -->
 						</LLHLS>
+						<HLS>
+							<SegmentCount>4</SegmentCount>
+							<SegmentDuration>4</SegmentDuration>
+							<!-- <DVR>
+								<Enable>true</Enable>
+								<EventPlaylistType>false</EventPlaylistType>
+								<TempStoragePath>/tmp/ome_dvr/</TempStoragePath>
+								<MaxDuration>600</MaxDuration>
+							</DVR> -->
+							<CrossDomains>
+								<Url>*</Url>
+							</CrossDomains>
+							<CreateDefaultPlaylist>true</CreateDefaultPlaylist> <!-- ts:playlist.m3u8 -->
+						</HLS>
+
+						<!--
+						<Push>
+							<StreamMap>
+								<Enable>false</Enable>
+								<Path>path/to/file.xml</Path>
+							</StreamMap>
+						</Push>
+						<FILE>
+							<RootPath>/prefix/path/to</RootPath>
+							<StreamMap>
+								<Enable>false</Enable>
+								<Path>path/to/file.xml</Path>
+							</StreamMap>
+						</FILE>
+						<Thumbnail>
+							<CrossDomains>
+								<Url>*</Url>
+							</CrossDomains>
+						</Thumbnail>						
+						-->
 					</Publishers>
 				</Application>
 			</Applications>

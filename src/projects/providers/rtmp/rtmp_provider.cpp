@@ -45,6 +45,11 @@ namespace pvd
 	{
 #if DEBUG
 		dump_packet = ov::Converter::ToBool(std::getenv("OME_DUMP_RTMP"));
+
+		if (dump_packet)
+		{
+			logtw("RTMP packet dump is enabled. Dump files are saved in %s", ov::PathManager::GetAppPath("dump/rtmp").CStr());
+		}
 #endif	// DEBUG
 
 		auto provider = std::make_shared<RtmpProvider>(server_config, router);
@@ -102,7 +107,7 @@ namespace pvd
 		if (rtmp_address_list.empty())
 		{
 			logte("Could not obtain IP list from IP(s): %s, port: %d",
-				  ov::String::Join(server.GetIPList(), ", "),
+				  ov::String::Join(server.GetIPList(), ", ").CStr(),
 				  static_cast<uint16_t>(rtmp_config.GetPort().GetPort()));
 
 			return false;

@@ -90,16 +90,18 @@ enum class PublisherType : int8_t
 {
 	Unknown = 0,
 	Webrtc,
-	MpegtsPush,
-	RtmpPush,
-	SrtPush,
-	Hls,
-	Dash,
-	LLDash,
+	MpegtsPush, // Deprecated
+	RtmpPush,	// Deprecated
+	SrtPush,	// Deprecated
+	Push,
 	LLHls,
 	Ovt,
 	File,
 	Thumbnail,
+	Hls, // HLSv3
+	Srt,
+
+	// End Marker
 	NumberOfPublishers,
 };
 
@@ -151,6 +153,12 @@ public:
 
 	// Currently only used for RTSP Provider only
 	bool last_fragment_complete = false;
+
+	void AddFragment(size_t offset, size_t length)
+	{
+		fragmentation_offset.push_back(offset);
+		fragmentation_length.push_back(length);
+	}
 
 	size_t GetCount() const
 	{
@@ -281,7 +289,7 @@ struct CodecSpecificInfo
 {
 	cmn::MediaCodecId codec_type = cmn::MediaCodecId::None;
 	const char *codec_name = nullptr;
-	CodecSpecificInfoUnion codec_specific = {0};
+	CodecSpecificInfoUnion codec_specific = {};
 };
 
 static ov::String StringFromStreamSourceType(const StreamSourceType &type)
@@ -376,12 +384,8 @@ static ov::String StringFromPublisherType(const PublisherType &type)
 			return "RTMPPush";
 		case PublisherType::SrtPush:
 			return "SRTPush";
-		case PublisherType::Hls:
-			return "HLS";
-		case PublisherType::Dash:
-			return "DASH";
-		case PublisherType::LLDash:
-			return "LLDASH";
+		case PublisherType::Push:
+			return "Push";			
 		case PublisherType::LLHls:
 			return "LLHLS";
 		case PublisherType::Ovt:
@@ -390,6 +394,10 @@ static ov::String StringFromPublisherType(const PublisherType &type)
 			return "File";
 		case PublisherType::Thumbnail:
 			return "Thumbnail";
+		case PublisherType::Hls:
+			return "HLSv3";
+		case PublisherType::Srt:
+			return "SRT";
 	}
 
 	return "Unknown";
@@ -419,6 +427,8 @@ static ov::String StringFromMediaCodecId(const cmn::MediaCodecId &type)
 			return "JPEG";
 		case cmn::MediaCodecId::Png:
 			return "PNG";
+		case cmn::MediaCodecId::Webp:
+			return "WEBP";			
 		case cmn::MediaCodecId::None:
 		default:
 			return "Unknown";

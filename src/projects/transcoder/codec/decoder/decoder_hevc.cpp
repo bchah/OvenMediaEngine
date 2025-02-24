@@ -11,13 +11,8 @@
 #include "../../transcoder_private.h"
 #include "base/info/application.h"
 
-bool DecoderHEVC::Configure(std::shared_ptr<MediaTrack> context)
+bool DecoderHEVC::InitCodec()
 {
-	if (TranscodeDecoder::Configure(context) == false)
-	{
-		return false;
-	}
-
 	const AVCodec *_codec = ::avcodec_find_decoder(GetCodecID());
 	if (_codec == nullptr)
 	{
@@ -33,6 +28,8 @@ bool DecoderHEVC::Configure(std::shared_ptr<MediaTrack> context)
 	}
 
 	_context->time_base = ffmpeg::Conv::TimebaseToAVRational(GetTimebase());
+	_context->thread_count = GetRefTrack()->GetThreadCount();
+	_context->thread_type = FF_THREAD_FRAME;
 
 	if (::avcodec_open2(_context, _codec, nullptr) < 0)
 	{
@@ -40,29 +37,48 @@ bool DecoderHEVC::Configure(std::shared_ptr<MediaTrack> context)
 		return false;
 	}
 
-	// Create packet parser
-	_parser = ::av_parser_init(_codec->id);
+	_parser = ::av_parser_init(GetCodecID());
 	if (_parser == nullptr)
 	{
 		logte("Parser not found");
 		return false;
 	}
-
 	_parser->flags |= PARSER_FLAG_COMPLETE_FRAMES;
 
-	// Generates a thread that reads and encodes frames in the input_buffer queue and places them in the output queue.
-	try
-	{
-		_kill_flag = false;
+	_change_format = false;
 
-		_codec_thread = std::thread(&TranscodeDecoder::CodecThread, this);
-		pthread_setname_np(_codec_thread.native_handle(), ov::String::FormatString("Dec%s", avcodec_get_name(GetCodecID())).CStr());
-	}
-	catch (const std::system_error &e)
+	return true;
+}
+
+void DecoderHEVC::UninitCodec()
+{
+	if (_context != nullptr)
 	{
-		logte("Failed to start decoder thread");
-		_kill_flag = true;
-		return false;
+		::avcodec_free_context(&_context);
+	}
+	_context = nullptr;
+
+	if (_parser != nullptr)
+	{
+		::av_parser_close(_parser);
+	}
+	_parser = nullptr;
+}
+
+bool DecoderHEVC::ReinitCodecIfNeed()
+{
+	// NVIDIA H.264 decoder does not support dynamic resolution streams. (e.g. WebRTC)
+	// So, when a resolution change is detected, the codec is reset and recreated.
+	if (_context->width != 0 && _context->height != 0 && (_parser->width != _context->width || _parser->height != _context->height))
+	{
+		logti("Changed input resolution of %u track. (%dx%d -> %dx%d)", GetRefTrack()->GetId(), _context->width, _context->height, _parser->width, _parser->height);
+
+		UninitCodec();
+
+		if (InitCodec() == false)
+		{
+			return false;
+		}
 	}
 
 	return true;
@@ -70,6 +86,12 @@ bool DecoderHEVC::Configure(std::shared_ptr<MediaTrack> context)
 
 void DecoderHEVC::CodecThread()
 {
+	// Initialize the codec and notify the main thread.
+	if(_codec_init_event.Submit(InitCodec()) == false)
+	{
+		return;
+	}
+
 	while (!_kill_flag)
 	{
 		auto obj = _input_buffer.Dequeue();
@@ -104,6 +126,11 @@ void DecoderHEVC::CodecThread()
 				break;
 			}
 
+			if (ReinitCodecIfNeed() == false)
+			{
+				break;
+			}
+
 			if (_pkt->size > 0)
 			{
 				_pkt->pts = _parser->pts;
@@ -117,8 +144,18 @@ void DecoderHEVC::CodecThread()
 					_pkt->duration = duration;
 				}
 
-				int ret = ::avcodec_send_packet(_context, _pkt);
+				// Keyframe Decode Only
+				// If set to decode only key frames, non-keyframe packets are dropped.
+				if(GetRefTrack()->IsKeyframeDecodeOnly() == true)
+				{
+					// Drop non-keyframe packets
+					if (!(_pkt->flags & AV_PKT_FLAG_KEY))
+					{
+						break;
+					}
+				}
 
+				int ret = ::avcodec_send_packet(_context, _pkt);
 				if (ret == AVERROR(EAGAIN))
 				{
 					// Need more data
@@ -198,7 +235,7 @@ void DecoderHEVC::CodecThread()
 					{
 						auto codec_info = ffmpeg::Conv::CodecInfoToString(_context, _codec_par);
 						logti("[%s/%s(%u)] input track information: %s",
-							  _stream_info.GetApplicationInfo().GetName().CStr(),
+							  _stream_info.GetApplicationInfo().GetVHostAppName().CStr(),
 							  _stream_info.GetName().CStr(),
 							  _stream_info.GetId(),
 							  codec_info.CStr());
@@ -215,11 +252,11 @@ void DecoderHEVC::CodecThread()
 				}
 
 				// If there is no duration, the duration is calculated by framerate and timebase.
-				if(_frame->pkt_duration <= 0LL && _context->framerate.num > 0 && _context->framerate.den > 0)
+				if (_frame->pkt_duration <= 0LL && _context->framerate.num > 0 && _context->framerate.den > 0)
 				{
-					_frame->pkt_duration = (int64_t)( ((double)_context->framerate.den / (double)_context->framerate.num) / ((double) GetRefTrack()->GetTimeBase().GetNum() / (double) GetRefTrack()->GetTimeBase().GetDen()) );
+					_frame->pkt_duration = (int64_t)(((double)_context->framerate.den / (double)_context->framerate.num) / ((double)GetRefTrack()->GetTimeBase().GetNum() / (double)GetRefTrack()->GetTimeBase().GetDen()));
 				}
-				
+
 				auto decoded_frame = ffmpeg::Conv::ToMediaFrame(cmn::MediaType::Video, _frame);
 				::av_frame_unref(_frame);
 				if (decoded_frame == nullptr)
@@ -227,7 +264,7 @@ void DecoderHEVC::CodecThread()
 					continue;
 				}
 
-				SendOutputBuffer(need_to_change_notify ? TranscodeResult::FormatChanged : TranscodeResult::DataReady, std::move(decoded_frame));
+				Complete(need_to_change_notify ? TranscodeResult::FormatChanged : TranscodeResult::DataReady, std::move(decoded_frame));
 			}
 		}
 	}

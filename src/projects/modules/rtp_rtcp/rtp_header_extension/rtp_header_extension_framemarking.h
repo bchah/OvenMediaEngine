@@ -21,9 +21,6 @@
 //
 // OvenMediaEnigne doesn't use LID and TL0PICIDX
 
-#define RTP_HEADER_EXTENSION_FRAMEMARKING_ID	1
-#define RTP_HEADER_EXTENSION_FRAMEMARKING_ATTRIBUTE "urn:ietf:params:rtp-hdrext:framemarking"
-
 class RtpHeaderExtensionFrameMarking : public RtpHeaderExtension
 {
 public:
@@ -133,6 +130,6 @@ private:
 	uint8_t _temporal_id = 0;
 
 	// Not used
-	uint8_t _layer_id = 0;
-	uint8_t _tl0picidx = 0;
+	[[maybe_unused]] uint8_t _layer_id = 0;
+	[[maybe_unused]] uint8_t _tl0picidx = 0;
 };

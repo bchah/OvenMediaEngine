@@ -56,14 +56,11 @@ namespace pvd
 		auto stream_map = srt_bind_config.GetStreamMap();
 		for (const auto &stream : stream_map.GetStreamList())
 		{
-			_stream_map.emplace(stream.GetPort(), std::make_shared<StreamMap>(stream.GetPort(), stream.GetUrl()));
+			_stream_map.emplace(stream.GetPort(), std::make_shared<StreamMap>(stream.GetPort(), stream.GetStreamPath()));
 		}
 		lock.unlock();
 
 		bool is_configured;
-		auto worker_count = srt_bind_config.GetWorkerCount(&is_configured);
-		worker_count = is_configured ? worker_count : PHYSICAL_PORT_USE_DEFAULT_COUNT;
-
 		bool is_port_configured;
 		auto &port_config = srt_bind_config.GetPort(&is_port_configured);
 
@@ -89,6 +86,9 @@ namespace pvd
 		std::vector<std::shared_ptr<PhysicalPort>> physical_port_list;
 
 		auto physical_port_manager = PhysicalPortManager::GetInstance();
+
+		auto worker_count = srt_bind_config.GetWorkerCount(&is_configured);
+		worker_count = is_configured ? worker_count : PHYSICAL_PORT_USE_DEFAULT_COUNT;
 
 		for (const auto &address : address_list)
 		{
@@ -216,10 +216,29 @@ namespace pvd
 				return;
 			}
 
-			decoded_url = stream_map->_listen_url;
+			decoded_url = stream_map->stream_path;
 		}
 		else
 		{
+			// SRT AccessControl style : #!::u=abc123,bmd_uuid=1234567890...
+			if (streamid.GetLength() > 4 && streamid.HasPrefix("#!::"))
+			{
+				// Remove #!::
+				streamid = streamid.Substring(4);
+
+				auto key_values = streamid.Split(",");
+				// Extract u=xxx (user name)
+				for (const auto &key_value : key_values)
+				{
+					auto key_value_pair = key_value.Split("=");
+					if (key_value_pair.size() == 2 && key_value_pair[0] == "u")
+					{
+						streamid = key_value_pair[1];
+						break;
+					}
+				}
+			}
+
 			// urlencode(srt://host[:port]/app/stream?query=value)
 			decoded_url = ov::Url::Decode(streamid);
 		}
@@ -241,10 +260,13 @@ namespace pvd
 		//TODO(Getroot): For security enhancement,
 		// it should be checked whether the actual ip:port is the same as the ip:port of streamid (after dns resolve if it is domain).
 
+		auto remote_address = remote->GetRemoteAddress();
+		auto request_info = std::make_shared<ac::RequestInfo>(final_url, nullptr, remote, nullptr);
+
 		// SingedPolicy
 		uint64_t life_time = 0;
-		auto remote_address = remote->GetRemoteAddress();
-		auto [signed_policy_result, signed_policy] = VerifyBySignedPolicy(final_url, remote_address);
+		
+		auto [signed_policy_result, signed_policy] = VerifyBySignedPolicy(request_info);
 		if (signed_policy_result == AccessController::VerificationResult::Off)
 		{
 			// Success
@@ -265,8 +287,6 @@ namespace pvd
 			remote->Close();
 			return;
 		}
-
-		auto request_info = std::make_shared<AccessController::RequestInfo>(final_url, remote_address);
 
 		auto [webhooks_result, admission_webhooks] = VerifyByAdmissionWebhooks(request_info);
 		if (webhooks_result == AccessController::VerificationResult::Off)
@@ -354,13 +374,9 @@ namespace pvd
 		auto final_url = channel->GetFinalUrl();
 		if (remote && requested_url && final_url)
 		{
-			auto remote_address = remote->GetRemoteAddress();
-			if (remote_address)
-			{
-				auto request_info = std::make_shared<AccessController::RequestInfo>(requested_url, remote_address, requested_url->ToUrlString(true) == final_url->ToUrlString(true) ? nullptr : final_url);
+			auto request_info = std::make_shared<ac::RequestInfo>(requested_url, final_url, remote, nullptr);
 
-				SendCloseAdmissionWebhooks(request_info);
-			}
+			SendCloseAdmissionWebhooks(request_info);
 		}
 		// the return check is not necessary
 

@@ -4,16 +4,14 @@ Apple supports Low-Latency HLS (LLHLS), which enables low-latency video streamin
 
 LLHLS is an extension of HLS, so legacy HLS players can play LLHLS streams. However, the legacy HLS player plays the stream without using the low-latency function.
 
-| Title     | Descriptions              |
-| --------- | ------------------------- |
-| Delivery  | <p>HTTP/1.1<br>HTTP/2</p> |
-| Security  | TLS (HTTPS)               |
-| Container | fMP4                      |
-| Codecs    | <p>H.264<br>AAC</p>       |
+| Title     | Descriptions                    |
+| --------- | ------------------------------- |
+| Delivery  | <p>HTTP/1.1<br>HTTP/2</p>       |
+| Security  | TLS (HTTPS)                     |
+| Container | fMP4                            |
+| Codecs    | <p>H.264</p><p>H.265<br>AAC</p> |
 
 ## Configuration
-
-
 
 To use LLHLS, you need to add the `<LLHLS>` elements to the `<Publishers>` in the configuration as shown in the following example.
 
@@ -60,7 +58,7 @@ To use LLHLS, you need to add the `<LLHLS>` elements to the `<Publishers>` in th
 | ChunkDuration   | Set the partial segment length to fractional seconds. This value affects low-latency HLS player. We recommend **0.2** seconds for this value.                                                                                              |
 | SegmentDuration | Set the length of the segment in seconds. Therefore, a shorter value allows the stream to start faster. However, a value that is too short will make legacy HLS players unstable. Apple recommends **6** seconds for this value.           |
 | SegmentCount    | The number of segments listed in the playlist. This value has little effect on LLHLS players, so use **10** as recommended by Apple. 5 is recommended for legacy HLS players. Do not set below 3. It can only be used for experimentation. |
-| CrossDomains    | Control the domain in which the player works through `<CorssDomain>`. For more information, please refer to the [CrossDomain](hls-mpeg-dash.md#crossdomain) section.                                                                       |
+| CrossDomains    | Control the domain in which the player works through `<CorssDomain>`. For more information, please refer to the [CrossDomain](broken-reference) section.                                                                                   |
 
 {% hint style="info" %}
 HTTP/2 outperforms HTTP/1.1, especially with LLHLS. Since all current browsers only support h2, HTTP/2 is supported only on TLS port. Therefore, it is highly recommended to use LLHLS on the TLS port.
@@ -74,27 +72,7 @@ See the [Adaptive Bitrates Streaming](../transcoding/#adaptive-bitrates-streamin
 
 ## CrossDomain
 
-Most browsers and players prohibit accessing other domain resources in the currently running domain. You can control this situation through Cross-Origin Resource Sharing (CORS) or Cross-Domain (CrossDomain). You can set CORS and Cross-Domain as `<CrossDomains>` element.
-
-{% code title="Server.xml" %}
-```markup
-<CrossDomains>
-    <Url>*</Url>
-    <Url>*.airensoft.com</Url>
-    <Url>http://*.ovenplayer.com</Url>
-    <Url>https://demo.ovenplayer.com</Url>
-</CrossDomains>
-```
-{% endcode %}
-
-You can set it using the `<Url>` element as shown above, and you can use the following values:
-
-| Url Value      | Description                                                   |
-| -------------- | ------------------------------------------------------------- |
-| \*             | Allows requests from all Domains                              |
-| domain         | Allows both HTTP and HTTPS requests from the specified Domain |
-| http://domain  | Allows HTTP requests from the specified Domain                |
-| https://domain | Allows HTTPS requests from the specified Domain               |
+For information on CrossDomains, see [CrossDomains ](../crossdomains.md)chapter.
 
 ## Streaming
 
@@ -270,6 +248,10 @@ OvenPlayer now includes DRM-related options. Enable DRM and input the License UR
 
 ### Pallycon DRM
 
+{% hint style="danger" %}
+Pallycon is no longer supported by the Open Source project and is only supported in the [Enterprise](https://ovenmediaengine-enterprise.gitbook.io/docs/getting-started/getting-started-with-ubuntu) version. For more information, see this [article](https://github.com/AirenSoft/OvenMediaEngine/discussions/1634).
+{% endhint %}
+
 OvenMediaEngine integrates with [Pallycon](https://pallycon.com/), allowing you to more easily apply DRM to LLHLS streams.
 
 To integrate Pallycon, configure the DRMInfo.xml file as follows.
@@ -286,7 +268,7 @@ To integrate Pallycon, configure the DRMInfo.xml file as follows.
 
         <DRMProvider>Pallycon</DRMProvider> <!-- Manual(default), Pallycon -->
         <DRMSystem>Widevine,Fairplay</DRMSystem> <!-- Widevine, Fairplay -->
-        <CencProtectScheme>cbcs</CencProtectScheme> <!-- cbcs -->
+        <CencProtectScheme>cbcs</CencProtectScheme> <!-- cbcs, cenc -->
         <ContentId>${VHostName}_${AppName}_${StreamName}</ContentId>
         <KMSUrl>https://kms.pallycon.com/v2/cpix/pallycon/getKey/</KMSUrl>
         <KMSToken>xxxx</KMSToken>

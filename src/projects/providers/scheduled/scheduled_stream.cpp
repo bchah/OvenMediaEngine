@@ -400,6 +400,8 @@ namespace pvd
         std::map<int, int64_t> track_single_file_dts_offset_map;
         std::map<int, bool> end_of_track_map;
 
+        bool is_mpegts { std::strncmp(context->iformat->name, "mpegts", 6) == 0 };
+
         while (_worker_thread_running)
         {
             if (CheckCurrentProgramChanged() == true)
@@ -477,15 +479,15 @@ namespace pvd
 			switch (track->GetCodecId())
 			{
 				case cmn::MediaCodecId::H264:
-					bitstream_format = cmn::BitstreamFormat::H264_AVCC;
+					bitstream_format = (is_mpegts) ? cmn::BitstreamFormat::H264_ANNEXB : cmn::BitstreamFormat::H264_AVCC;
 					packet_type = cmn::PacketType::NALU;
 					break;
-                case cmn::MediaCodecId::H265:
-                    bitstream_format = cmn::BitstreamFormat::HVCC;
-                    packet_type = cmn::PacketType::NALU;
-                    break;
+				case cmn::MediaCodecId::H265:
+					bitstream_format = (is_mpegts) ? cmn::BitstreamFormat::H265_ANNEXB : cmn::BitstreamFormat::HVCC;
+					packet_type = cmn::PacketType::NALU;
+					break;
 				case cmn::MediaCodecId::Aac:
-					bitstream_format = cmn::BitstreamFormat::AAC_RAW;
+					bitstream_format = (is_mpegts) ? cmn::BitstreamFormat::AAC_ADTS : cmn::BitstreamFormat::AAC_RAW;
 					packet_type = cmn::PacketType::RAW;
 					break;
 				case cmn::MediaCodecId::Opus:
@@ -514,9 +516,9 @@ namespace pvd
             auto duration = media_packet->GetDuration();
 
             // origin timebase to track timebase
-            pts = pts * track->GetTimeBase().GetTimescale() * origin_tb.num / origin_tb.den;
-            dts = dts * track->GetTimeBase().GetTimescale() * origin_tb.num / origin_tb.den;
-            duration = duration * track->GetTimeBase().GetTimescale() * origin_tb.num / origin_tb.den;
+            pts = static_cast<double>(pts) * (static_cast<double>(origin_tb.num) / static_cast<double>(origin_tb.den) * track->GetTimeBase().GetTimescale());
+            dts = static_cast<double>(dts) * (static_cast<double>(origin_tb.num) / static_cast<double>(origin_tb.den) * track->GetTimeBase().GetTimescale());
+            duration = static_cast<double>(duration) * (static_cast<double>(origin_tb.num) / static_cast<double>(origin_tb.den) * track->GetTimeBase().GetTimescale());
 
             if (track_first_packet_map.find(track_id) == track_first_packet_map.end())
             {
@@ -524,28 +526,40 @@ namespace pvd
                 track_single_file_dts_offset_map[track_id] = dts;
             }
             auto single_file_dts = dts - track_single_file_dts_offset_map[track_id];
-            
+           
             AdjustTimestampByBase(track_id, pts, dts, std::numeric_limits<int64_t>::max(), duration);
 
             media_packet->SetPts(pts);
             media_packet->SetDts(dts);
-            media_packet->SetDuration(duration);
+            media_packet->SetDuration(-1); // Duration will be calculated in MediaRouter
 
-            logtd("Scheduled Channel Send Packet : %s/%s: Track %d, origin dts : %lld, pts %lld, dts %lld, duration %lld, tb %f", GetApplicationName(), GetName().CStr(), track_id, single_file_dts, pts, dts, duration, track->GetTimeBase().GetExpr());
+			double time_ms = static_cast<double>(dts) * track->GetTimeBase().GetExpr() * 1000.0;
+
+            int64_t dts_gap = 0;
+            if (_last_packet_map.find(track_id) != _last_packet_map.end())
+            {
+                auto last_packet = _last_packet_map.at(track_id);
+                dts_gap = media_packet->GetDts() - last_packet->GetDts();
+            }
+
+            logtd("Scheduled Channel Send Packet : %s/%s: Track %d, origin dts : %lld, pts %lld, dts %lld, duration %lld, tb %f, dts_ms %f, dts_gap %lld", GetApplicationName(), GetName().CStr(), track_id, single_file_dts, pts, dts, duration, track->GetTimeBase().GetExpr(), time_ms, dts_gap);
 
             SendFrame(media_packet);
 
+            _last_packet_map[track_id] = media_packet;
+
             // dts to real time (ms)
-            auto single_file_dts_ms = single_file_dts * track->GetTimeBase().GetExpr() * 1000;
+            auto single_file_dts_ms = static_cast<double>(single_file_dts) * track->GetTimeBase().GetExpr() * 1000.0;
+			auto single_file_duration_ms = single_file_dts_ms + static_cast<double>(duration) * track->GetTimeBase().GetExpr() * 1000.0;
 
             std::unique_lock<std::shared_mutex> lock(_current_mutex);
-            _current_item_position_ms = single_file_dts_ms;
+            _current_item_position_ms = single_file_duration_ms;
             lock.unlock();
 
              // Get current play time
             if (item->duration_ms >= 0)
             {
-                if (single_file_dts_ms > item->duration_ms)
+                if (single_file_duration_ms >= item->duration_ms)
                 {
                     end_of_track_map[track_id] = true;
                 }
@@ -564,19 +578,19 @@ namespace pvd
                 if (all_tracks_ended == true)
                 {
                     // End of item
-                    logti("Scheduled Channel : %s/%s: End of item (Current Pos : %.0f ms Duration : %lld ms). Try to play next item", GetApplicationName(), GetName().CStr(), single_file_dts_ms, item->duration_ms);
+                    logti("Scheduled Channel : %s/%s: End of item (Current Pos : %.0f ms Duration : %lld ms). Try to play next item", GetApplicationName(), GetName().CStr(), single_file_duration_ms, item->duration_ms);
                     result = PlaybackResult::PLAY_NEXT_ITEM;
                     break;
                 }
             }
             
-            auto elapsed = _realtime_clock.Elapsed();
-            auto dts_ms = (int64_t)(dts * 1000.0 * track->GetTimeBase().GetExpr());
-            if (elapsed < dts_ms)
+            double elapsed = _realtime_clock.ElapsedUs();
+            double dts_us = static_cast<double>(dts) * 1000.0 * 1000.0 * track->GetTimeBase().GetExpr();
+            if (elapsed < dts_us)
             {
-                auto wait_time = dts_ms - elapsed;
-                logtd("Scheduled Channel : %s/%s: Current(%lld) Dts(%lld) Wait(%lld)", GetApplicationName(), GetName().CStr(), elapsed, dts_ms, (int64_t)wait_time);
-                std::this_thread::sleep_for(std::chrono::milliseconds(wait_time));
+                int64_t wait_time = dts_us - elapsed;
+                logtd("Scheduled Channel : %s/%s: Current(%f) Dts(%f) Wait(%lld)", GetApplicationName(), GetName().CStr(), elapsed, dts_us, wait_time);
+                std::this_thread::sleep_for(std::chrono::microseconds(wait_time));
             }
         }
 
@@ -725,7 +739,7 @@ namespace pvd
                 }
 
                 new_track->SetId(kScheduledVideoTrackId);
-                new_track->SetTimeBase(1, kScheduledTimebase); // We fixed time base in scheduled stream
+                new_track->SetTimeBase(1, kScheduledVideoTimebase);
                 _origin_id_track_id_map.emplace(stream->index, kScheduledVideoTrackId);
                 UpdateTrack(new_track);
 
@@ -750,7 +764,7 @@ namespace pvd
                 }
 
                 new_track->SetId(kScheduledAudioTrackId);
-                new_track->SetTimeBase(1, kScheduledTimebase); // We fixed time base in scheduled stream
+                new_track->SetTimeBase(1, new_track->GetSampleRate());
                 _origin_id_track_id_map.emplace(stream->index, kScheduledAudioTrackId);
                 UpdateTrack(new_track);
 
@@ -787,7 +801,7 @@ namespace pvd
 			data_track->SetId(kScheduledDataTrackId);
 			data_track->SetMediaType(cmn::MediaType::Data);
 			data_track->SetTimeBase(1, 1000); // Data track time base is always 1/1000 in
-			data_track->SetOriginBitstream(cmn::BitstreamFormat::ID3v2);
+			data_track->SetOriginBitstream(cmn::BitstreamFormat::Unknown);
 			
 			UpdateTrack(data_track);
 		}
@@ -927,12 +941,12 @@ namespace pvd
             media_packet->SetTrackId(track_id);
             auto pts = media_packet->GetPts();
             auto dts = media_packet->GetDts();
-            auto duration = media_packet->GetDuration();
+            //auto duration = media_packet->GetDuration();
 
             // origin timebase to track timebase
-            pts = pts * track->GetTimeBase().GetTimescale() * origin_tb.GetNum() / origin_tb.GetDen();
-            dts = dts * track->GetTimeBase().GetTimescale() * origin_tb.GetNum() / origin_tb.GetDen();
-            duration = duration * track->GetTimeBase().GetTimescale() * origin_tb.GetNum() / origin_tb.GetDen();
+            pts = ((pts * (double)origin_tb.GetNum()) / (double)origin_tb.GetDen()) * track->GetTimeBase().GetTimescale();
+            dts = ((dts * (double)origin_tb.GetNum()) / (double)origin_tb.GetDen()) * track->GetTimeBase().GetTimescale();
+            //duration = ((duration * (double)origin_tb.GetNum()) / (double)origin_tb.GetDen()) * track->GetTimeBase().GetTimescale();
 
             if (track_first_packet_map.find(track_id) == track_first_packet_map.end())
             {
@@ -942,18 +956,21 @@ namespace pvd
             auto single_file_dts = dts - track_single_file_dts_offset_map[track_id];
 
             //TODO(Getroot): need to calc duration?
-
             AdjustTimestampByBase(track_id, pts, dts, std::numeric_limits<int64_t>::max());
-
+			
+			media_packet->SetMsid(GetMsid());
             media_packet->SetPts(pts);
             media_packet->SetDts(dts);
+			media_packet->SetDuration(-1); // It will be calculated in MediaRouter
 
-            logtd("Scheduled Channel Send Packet : %s/%s: Track %d, origin dts : %lld, pts %lld, dts %lld, duration %lld, tb %f", GetApplicationName(), GetName().CStr(), track_id, single_file_dts, pts, dts, duration, track->GetTimeBase().GetExpr());
+			double time_ms = (double)(dts * 1000.0 * track->GetTimeBase().GetExpr());
+
+            logtd("Scheduled Channel Send Packet : %s/%s: Track %d, origin dts : %lld, pts %lld, dts %lld, tb %f, dts_ms %f", GetApplicationName(), GetName().CStr(), track_id, single_file_dts, pts, dts, track->GetTimeBase().GetExpr(), time_ms);
 
             SendFrame(media_packet);
 
             // dts to real time (ms)
-            auto single_file_dts_ms = single_file_dts * track->GetTimeBase().GetExpr() * 1000;
+            auto single_file_dts_ms = static_cast<double>(single_file_dts) * track->GetTimeBase().GetExpr() * static_cast<double>(1000);
 
             std::unique_lock<std::shared_mutex> lock(_current_mutex);
             _current_item_position_ms = single_file_dts_ms;
@@ -1071,6 +1088,7 @@ namespace pvd
     std::shared_ptr<MediaRouterStreamTap> ScheduledStream::PrepareStreamPlayback(const std::shared_ptr<Schedule::Item> &item)
     {
         auto stream_tap = MediaRouterStreamTap::Create();
+		stream_tap->SetNeedPastData(true);
 
         auto stream_url = ov::Url::Parse(item->url);
         if (stream_url == nullptr)
@@ -1115,7 +1133,7 @@ namespace pvd
                 }
 
                 new_track->SetId(kScheduledVideoTrackId);
-                new_track->SetTimeBase(1, kScheduledTimebase); // We fixed time base in scheduled stream
+                new_track->SetTimeBase(1, kScheduledVideoTimebase);
                 _origin_id_track_id_map.emplace(track_id, kScheduledVideoTrackId);
                 UpdateTrack(new_track);
 
@@ -1131,7 +1149,7 @@ namespace pvd
                 }
 
                 new_track->SetId(kScheduledAudioTrackId);
-                new_track->SetTimeBase(1, kScheduledTimebase); // We fixed time base in scheduled stream
+                new_track->SetTimeBase(1, new_track->GetSampleRate());
                 _origin_id_track_id_map.emplace(track_id, kScheduledAudioTrackId);
                 UpdateTrack(new_track);
 
@@ -1159,7 +1177,7 @@ namespace pvd
 			data_track->SetId(kScheduledDataTrackId);
 			data_track->SetMediaType(cmn::MediaType::Data);
 			data_track->SetTimeBase(1, 1000); // Data track time base is always 1/1000 in
-			data_track->SetOriginBitstream(cmn::BitstreamFormat::ID3v2);
+			data_track->SetOriginBitstream(cmn::BitstreamFormat::Unknown);
 			
 			UpdateTrack(data_track);
 		}

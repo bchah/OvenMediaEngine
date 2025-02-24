@@ -41,7 +41,7 @@ namespace pvd
 	}
 
 	RtspcStream::RtspcStream(const std::shared_ptr<pvd::PullApplication> &application, const info::Stream &stream_info, const std::vector<ov::String> &url_list, const std::shared_ptr<pvd::PullStreamProperties> &properties)
-		: pvd::PullStream(application, stream_info, url_list, properties), Node(NodeType::Rtsp)
+		: pvd::PullStream(application, stream_info, url_list, properties), Node(NodeType::Rtsp), _sdp(SessionDescription::SdpType::Answer)
 	{
 		SetState(State::IDLE);
 	}
@@ -388,6 +388,30 @@ namespace pvd
 			{
 				logtw("Ignored not supported media type : %s", media_desc->GetMediaTypeStr().CStr());
 				continue;
+			}
+
+			{
+				// Reject unsupported codec
+				//TODO: I have no idea if rtsp server returns multiple payload types
+				auto first_payload = media_desc->GetFirstPayload();
+				if (first_payload == nullptr)
+				{
+					logte("Failed to get the first Payload type of peer sdp");
+					return false;
+				}
+
+				switch (first_payload->GetCodec())
+				{
+					case PayloadAttr::SupportCodec::H264:
+					case PayloadAttr::SupportCodec::VP8:
+					case PayloadAttr::SupportCodec::MPEG4_GENERIC:
+					case PayloadAttr::SupportCodec::OPUS:
+						break;
+
+					default:
+						logte("%s - Unsupported codec  : %s, it will be ignored", GetName().CStr(), first_payload->GetCodecStr().CStr());
+						continue;
+				}
 			}
 
 			auto control = media_desc->GetControl();
@@ -911,7 +935,7 @@ namespace pvd
 		auto result = ReceivePacket(true);
 		if (result == false)
 		{
-			logte("%s/%s(%u) - Could not receive packet : err(%d)", GetApplicationInfo().GetName().CStr(), GetName().CStr(), GetId(), static_cast<uint8_t>(result));
+			logte("%s/%s(%u) - Could not receive packet : err(%d)", GetApplicationInfo().GetVHostAppName().CStr(), GetName().CStr(), GetId(), static_cast<uint8_t>(result));
 			SetState(State::ERROR);
 			return ProcessMediaResult::PROCESS_MEDIA_FAILURE;
 		}
@@ -942,7 +966,7 @@ namespace pvd
 				else
 				{
 					// Error
-					logte("%s/%s(%u) - Unknown rtsp message received", GetApplicationInfo().GetName().CStr(), GetName().CStr(), GetId());
+					logte("%s/%s(%u) - Unknown rtsp message received", GetApplicationInfo().GetVHostAppName().CStr(), GetName().CStr(), GetId());
 					SetState(State::ERROR);
 					return ProcessMediaResult::PROCESS_MEDIA_FAILURE;
 				}

@@ -211,9 +211,7 @@ ov::String LLHlsMasterPlaylist::MakeSessionKey() const
 			}
 			else if (_cenc_property.scheme == bmff::CencProtectScheme::Cenc)
 			{
-				// NOT Support yet
 				xkey.AppendFormat("METHOD=SAMPLE-AES-CTR");
-				return "";
 			}
 
 			xkey.AppendFormat(",URI=\"data:text/plain;base64,%s\"", ov::Base64::Encode(pssh.pssh_box_data, false).CStr());
@@ -250,8 +248,17 @@ ov::String LLHlsMasterPlaylist::MakePlaylist(const ov::String &chunk_query_strin
 {
 	ov::String playlist(10240);
 
+	uint8_t version = 6;
+	if (legacy == true)
+	{
+		version = 6;
+	}
+
 	playlist.AppendFormat("#EXTM3U\n");
-	playlist.AppendFormat("#EXT-X-VERSION:7\n");
+
+	// debug info
+	// playlist.AppendFormat("#// query_string(%s) legacy(%s) rewind(%s) include_path(%s)\n", chunk_query_string.CStr(), legacy ? "YES" : "NO", rewind ? "YES" : "NO", include_path ? "YES" : "NO");
+	playlist.AppendFormat("#EXT-X-VERSION:%d\n", version);
 	playlist.AppendFormat("#EXT-X-INDEPENDENT-SEGMENTS\n");
 
 	// Write EXT-X-MEDIA from _media_infos
@@ -341,7 +348,10 @@ ov::String LLHlsMasterPlaylist::MakePlaylist(const ov::String &chunk_query_strin
 	playlist.AppendFormat("\n");
 
 	// Write EXT-X-SESSION-KEY
-	playlist.Append(MakeSessionKey());
+	if (legacy == false)
+	{
+		playlist.Append(MakeSessionKey());
+	}
 
 	playlist.AppendFormat("\n");
 

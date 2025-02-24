@@ -5,7 +5,9 @@
 class DecoderConfigurationRecord
 {
 public:
-	std::shared_ptr<ov::Data> GetData()
+	virtual ~DecoderConfigurationRecord() = default;
+
+	std::shared_ptr<const ov::Data> GetData()
 	{
 		if (_updated)
 		{
@@ -16,17 +18,18 @@ public:
 		return _data;
 	}
 
-	virtual bool Parse(const std::shared_ptr<ov::Data> &data) = 0;
+	virtual bool Parse(const std::shared_ptr<const ov::Data> &data) = 0;
 	virtual bool IsValid() const = 0;
+	virtual bool Equals(const std::shared_ptr<DecoderConfigurationRecord> &other) = 0;
 
 	// RFC 6381
 	virtual ov::String GetCodecsParameter() const = 0;
 
 protected:
-	virtual std::shared_ptr<ov::Data> Serialize() = 0;
+	virtual std::shared_ptr<const ov::Data> Serialize() = 0;
 
 	// Set serialized data
-	void SetData(const std::shared_ptr<ov::Data> &data)
+	void SetData(const std::shared_ptr<const ov::Data> &data)
 	{
 		_data = data;
 		_updated = false;
@@ -38,6 +41,6 @@ protected:
 	}
 
 private:
-	std::shared_ptr<ov::Data> _data = nullptr;
+	std::shared_ptr<const ov::Data> _data = nullptr;
 	bool _updated = true;
 };

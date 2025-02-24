@@ -31,27 +31,27 @@ namespace mpegts
 
 		while(_buffer->GetLength() >= MPEGTS_MIN_PACKET_SIZE)
 		{
-			auto packet = std::make_shared<MpegTsPacket>(_buffer);
+			auto packet = std::make_shared<Packet>(_buffer);
 			
 			uint32_t parsed_length = packet->Parse();
 			if(parsed_length == 0)
 			{
 				_buffer = _buffer->Subdata(MPEGTS_MIN_PACKET_SIZE);
-				return false;
+				continue;
 			}
 
 			_buffer = _buffer->Subdata(parsed_length);
 
 			if(AddPacket(packet) == false)
 			{
-				return false;
+				continue;
 			}
 		}
 
 		return true;
 	}
 
-	bool MpegTsDepacketizer::AddPacket(const std::shared_ptr<MpegTsPacket> &packet)
+	bool MpegTsDepacketizer::AddPacket(const std::shared_ptr<Packet> &packet)
 	{
 		auto packet_type = GetPacketType(packet);
 
@@ -182,7 +182,7 @@ namespace mpegts
 		return es;
 	}
 
-	PacketType MpegTsDepacketizer::GetPacketType(const std::shared_ptr<MpegTsPacket> &packet)
+	PacketType MpegTsDepacketizer::GetPacketType(const std::shared_ptr<Packet> &packet)
 	{
 		switch(packet->PacketIdentifier())
 		{
@@ -211,7 +211,7 @@ namespace mpegts
 		return packet_type;
 	}
 
-	bool MpegTsDepacketizer::ParseSection(const std::shared_ptr<MpegTsPacket> &packet)
+	bool MpegTsDepacketizer::ParseSection(const std::shared_ptr<Packet> &packet)
 	{
 		BitReader bit_reader(packet->Payload(), packet->PayloadLength());
 
@@ -305,7 +305,7 @@ namespace mpegts
 		return true;
 	}
 
-	bool MpegTsDepacketizer::ParsePes(const std::shared_ptr<MpegTsPacket> &packet)
+	bool MpegTsDepacketizer::ParsePes(const std::shared_ptr<Packet> &packet)
 	{
 		// First packet of pes, it has pes header
 		if(packet->PayloadUnitStartIndicator())
@@ -549,7 +549,6 @@ namespace mpegts
 				track->SetCodecId(cmn::MediaCodecId::Aac);
 				track->SetOriginBitstream(cmn::BitstreamFormat::AAC_ADTS);
 				track->SetTimeBase(1, 90000);
-				track->SetAudioTimestampScale(90000/1000);
 				break;
 
 			default:

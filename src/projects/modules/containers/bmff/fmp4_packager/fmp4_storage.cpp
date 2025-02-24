@@ -121,6 +121,12 @@ namespace bmff
 		return chunk;
 	}
 
+	uint64_t FMP4Storage::GetSegmentCount() const
+	{
+		std::shared_lock<std::shared_mutex> lock(_segments_lock);
+		return _segments.size();
+	}
+
 	std::tuple<int64_t, int64_t> FMP4Storage::GetLastChunkNumber() const
 	{
 		auto last_segment = GetLastSegment();
@@ -338,7 +344,7 @@ namespace bmff
 			
 			if (segment->GetDuration() >= _config.segment_duration_ms * 1.2)
 			{
-				logtw("LLHLS stream (%s) / track (%d) - a longer-than-expected (%.1lf | expected : %llu) segment has created. Long or irregular intervals between keyframes might be the cause.", _stream_tag.CStr(), _track->GetId(), segment->GetDuration(), _config.segment_duration_ms);
+				logtw("LLHLS stream (%s) / track (%d) - a longer-than-expected (%.1lf | expected : %llu) segment has created. Long or irregular keyframe interval could be the cause.", _stream_tag.CStr(), _track->GetId(), segment->GetDuration(), _config.segment_duration_ms);
 			}
 		}
 		else if (segment->GetDuration() > _config.segment_duration_ms * 2)

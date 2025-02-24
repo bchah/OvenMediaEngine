@@ -14,6 +14,7 @@
 #include "monitoring/monitoring.h"
 
 #include <base/mediarouter/media_buffer.h>
+#include <base/mediarouter/media_event.h>
 #include <base/mediarouter/mediarouter_interface.h>
 
 namespace pvd
@@ -64,7 +65,10 @@ namespace pvd
 		virtual bool Stop();
 		virtual bool Terminate();
 
-		bool SendDataFrame(int64_t timestamp, const cmn::BitstreamFormat &format, const cmn::PacketType &packet_type, const std::shared_ptr<ov::Data> &frame);
+		bool SendDataFrame(int64_t timestamp, const cmn::BitstreamFormat &format, const cmn::PacketType &packet_type, const std::shared_ptr<ov::Data> &frame, bool urgent);
+
+		// Provider can override this function to handle the event if needed.
+		virtual bool SendEvent(const std::shared_ptr<MediaEvent> &event);
 
 		std::shared_ptr<ov::Url> GetRequestedUrl() const;
 		void SetRequestedUrl(const std::shared_ptr<ov::Url> &requested_url);
@@ -106,16 +110,18 @@ namespace pvd
 
 		// TrackID : Timestamp(us)
 		std::map<uint32_t, int64_t>			_source_timestamp_map;
-		std::map<uint32_t, int64_t>			_last_timestamp_map;
-		std::map<uint32_t, int64_t>			_base_timestamp_map;
+		std::map<uint32_t, double>			_last_timestamp_us_map;
+		std::map<uint32_t, double>			_base_timestamp_us_map;
+		std::map<uint32_t, double>			_last_duration_us_map;
 
-		std::map<uint32_t, int64_t>			_last_duration_map;
+		std::map<uint32_t, double>			_last_pts_tb_remainder_map;
+		std::map<uint32_t, double>			_last_dts_tb_remainder_map;
 
 		// For Wraparound
 		std::map<uint32_t, int64_t>			_last_origin_ts_map[2];
 		std::map<uint32_t, int64_t>			_wraparound_count_map[2]; // 0 : pts 1: dts
 
-		int64_t								_start_timestamp = -1LL;
+		double								_start_timestamp = -1LL;
 		std::chrono::time_point<std::chrono::system_clock>	_last_pkt_received_time = std::chrono::time_point<std::chrono::system_clock>::min();
 
 		State 	_state = State::IDLE;
@@ -135,6 +141,9 @@ namespace pvd
 
 		LipSyncClock 						_rtp_lip_sync_clock;
 		ov::StopWatch						_first_rtp_received_time;
+
+		int64_t _last_media_timestamp_ms = -1LL;
+		ov::StopWatch _elapsed_from_last_media_timestamp;
 
 		std::shared_ptr<pvd::Application> _application = nullptr;
 	};

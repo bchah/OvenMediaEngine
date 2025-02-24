@@ -151,6 +151,7 @@ static AVCodecID AvCodecIdFromMediaCodecId(cmn::MediaCodecId codec_id)
 		WRITER_CASE(cmn::MediaCodecId::Opus, AV_CODEC_ID_OPUS)
 		WRITER_CASE(cmn::MediaCodecId::Jpeg, AV_CODEC_ID_JPEG2000)
 		WRITER_CASE(cmn::MediaCodecId::Png, AV_CODEC_ID_PNG)
+		WRITER_CASE(cmn::MediaCodecId::Webp, AV_CODEC_ID_WEBP)
 	}
 
 	return AV_CODEC_ID_NONE;
@@ -223,7 +224,7 @@ bool Writer::FillCodecParameters(const std::shared_ptr<const Track> &track, AVCo
 			codec_parameters->height = media_track->GetHeight();
 			codec_parameters->format = media_track->GetColorspace();
 
-			std::shared_ptr<ov::Data> extra_data = nullptr;
+			std::shared_ptr<const ov::Data> extra_data = nullptr;
 			if (media_track->GetCodecId() == cmn::MediaCodecId::H265)
 			{
 				codec_parameters->codec_tag = MKTAG('h', 'v', 'c', '1');
@@ -263,7 +264,7 @@ bool Writer::FillCodecParameters(const std::shared_ptr<const Track> &track, AVCo
 			codec_parameters->format = static_cast<int>(media_track->GetSample().GetFormat());
 			codec_parameters->codec_tag = 0;
 
-			std::shared_ptr<ov::Data> extra_data = nullptr;
+			std::shared_ptr<const ov::Data> extra_data = nullptr;
 			if (media_track->GetCodecId() == cmn::MediaCodecId::Aac)
 			{
 				codec_parameters->codec_tag = MKTAG('a', 'a', 'c', 'p');
@@ -783,6 +784,7 @@ bool Writer::WritePacket(const std::shared_ptr<const MediaPacket> &packet)
 	switch (packet->GetBitstreamFormat())
 	{
 		case cmn::BitstreamFormat::H264_AVCC:
+			[[fallthrough]];
 		case cmn::BitstreamFormat::HVCC:
 			data = packet->GetData();
 			length_list.push_back(data->GetLength());
@@ -840,29 +842,38 @@ bool Writer::WritePacket(const std::shared_ptr<const MediaPacket> &packet)
 				}
 			}
 			break;
-		case cmn::BitstreamFormat::AAC_LATM:
-			[[fallthrough]];
+
 		case cmn::BitstreamFormat::Unknown:
 			[[fallthrough]];
-		case cmn::BitstreamFormat::VP8:
-			[[fallthrough]];
-		case cmn::BitstreamFormat::OPUS:
-			[[fallthrough]];
-		case cmn::BitstreamFormat::JPEG:
-			[[fallthrough]];
 		case cmn::BitstreamFormat::H264_RTP_RFC_6184:
+			[[fallthrough]];
+		case cmn::BitstreamFormat::VP8:
 			[[fallthrough]];
 		case cmn::BitstreamFormat::VP8_RTP_RFC_7741:
 			[[fallthrough]];
 		case cmn::BitstreamFormat::AAC_MPEG4_GENERIC:
 			[[fallthrough]];
+		case cmn::BitstreamFormat::AAC_LATM:
+			[[fallthrough]];
+		case cmn::BitstreamFormat::OPUS:
+			[[fallthrough]];
 		case cmn::BitstreamFormat::OPUS_RTP_RFC_7587:
 			[[fallthrough]];
+		case cmn::BitstreamFormat::JPEG:
+			[[fallthrough]];
+		case cmn::BitstreamFormat::PNG:
+			[[fallthrough]];
+		case cmn::BitstreamFormat::WEBP:
+			[[fallthrough]];			
 		case cmn::BitstreamFormat::ID3v2:
 			[[fallthrough]];
 		case cmn::BitstreamFormat::MP3:
 			[[fallthrough]];
-		case cmn::BitstreamFormat::PNG:
+		case cmn::BitstreamFormat::OVEN_EVENT:
+			[[fallthrough]];
+		case cmn::BitstreamFormat::CUE:
+			[[fallthrough]];
+		case cmn::BitstreamFormat::AMF:
 			break;
 	}
 

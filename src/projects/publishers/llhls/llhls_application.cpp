@@ -23,18 +23,18 @@ LLHlsApplication::LLHlsApplication(const std::shared_ptr<pub::Publisher> &publis
 {
 	auto llhls_config = application_info.GetConfig().GetPublishers().GetLLHlsPublisher();
 	bool is_parsed;
-	const auto &cross_domains = llhls_config.GetCrossDomainList(&is_parsed);
+	const auto &cross_domains = llhls_config.GetCrossDomains(&is_parsed);
 
 	if (is_parsed)
 	{
-		_cors_manager.SetCrossDomains(application_info.GetName(), cross_domains);
+		_cors_manager.SetCrossDomains(application_info.GetVHostAppName(), cross_domains);
 	}
 	else
 	{
-		const auto &default_cross_domains = application_info.GetHostInfo().GetCrossDomainList(&is_parsed);
+		const auto &default_cross_domains = application_info.GetHostInfo().GetCrossDomains(&is_parsed);
 		if (is_parsed)
 		{
-			_cors_manager.SetCrossDomains(application_info.GetName(), default_cross_domains);
+			_cors_manager.SetCrossDomains(application_info.GetVHostAppName(), default_cross_domains);
 		}
 	}
 
@@ -75,7 +75,7 @@ bool LLHlsApplication::DeleteStream(const std::shared_ptr<info::Stream> &info)
 		return false;
 	}
 
-	logtd("LLHlsApplication %s/%s stream has been deleted", GetName().CStr(), stream->GetName().CStr());
+	logtd("LLHlsApplication %s/%s stream has been deleted", GetVHostAppName().CStr(), stream->GetName().CStr());
 
 	return true;
 }

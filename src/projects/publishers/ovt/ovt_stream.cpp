@@ -38,9 +38,10 @@ bool OvtStream::Start()
 		return false;
 	}
 
-	if (GetLinkedInputStream() != nullptr && GetLinkedInputStream()->IsFromOriginMapStore() == false)
+	// If this stream is from OriginMapStore, don't register it to OriginMapStore again.
+	if (IsFromOriginMapStore() == false)
 	{
-		auto result = ocst::Orchestrator::GetInstance()->RegisterStreamToOriginMapStore(GetApplicationInfo().GetName(), GetName());
+		auto result = ocst::Orchestrator::GetInstance()->RegisterStreamToOriginMapStore(GetApplicationInfo().GetVHostAppName(), GetName());
 		if (result == CommonErrorCode::ERROR)
 		{
 			logtw("Failed to register stream to origin map store : %s/%s", GetApplicationName(), GetName().CStr());
@@ -71,7 +72,7 @@ bool OvtStream::Stop()
 	if (GetLinkedInputStream() != nullptr && GetLinkedInputStream()->IsFromOriginMapStore() == false)
 	{
 		// Unegister stream if OriginMapStore is enabled
-		auto result = ocst::Orchestrator::GetInstance()->UnregisterStreamFromOriginMapStore(GetApplicationInfo().GetName(), GetName());
+		auto result = ocst::Orchestrator::GetInstance()->UnregisterStreamFromOriginMapStore(GetApplicationInfo().GetVHostAppName(), GetName());
 		if (result == CommonErrorCode::ERROR)
 		{
 			logtw("Failed to unregister stream from origin map store : %s/%s", GetApplicationName(), GetName().CStr());
@@ -122,6 +123,7 @@ bool OvtStream::GenerateDescription()
 		Json::Value json_options;
 		json_options["webrtcAutoAbr"] = playlist->IsWebRtcAutoAbr();
 		json_options["hlsChunklistPathDepth"] = playlist->GetHlsChunklistPathDepth();
+		json_options["enableTsPackaging"] = playlist->IsTsPackagingEnabled();
 
 		json_playlist["options"] = json_options;
 

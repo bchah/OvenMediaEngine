@@ -37,6 +37,11 @@ namespace pub
 		bool Stop();
 		bool PushMediaPacket(const std::shared_ptr<Stream> &stream, const std::shared_ptr<MediaPacket> &media_packet);
 
+		uint32_t GetWorkerId() const;
+		void OnStreamCreated(const std::shared_ptr<info::Stream> &info);
+		void OnStreamDeleted(const std::shared_ptr<info::Stream> &info);
+		uint32_t GetStreamCount() const;
+
 	private:
 		void WorkerThread();
 
@@ -65,8 +70,10 @@ namespace pub
 
 		ov::ManagedQueue<std::shared_ptr<StreamData>> _stream_data_queue;
 
-		int64_t	_last_video_ts_ms = 0;
-		int64_t	_last_audio_ts_ms = 0;
+		[[maybe_unused]] int64_t _last_video_ts_ms = 0;
+		[[maybe_unused]] int64_t _last_audio_ts_ms = 0;
+
+		std::atomic<uint32_t> _stream_count = 0;
 	};
 
 	class Application : public info::Application, public MediaRouterApplicationObserver
@@ -105,48 +112,19 @@ namespace pub
 		virtual bool DeleteStream(const std::shared_ptr<info::Stream> &info) = 0;
 		
 		std::shared_ptr<ApplicationWorker> GetWorkerByStreamID(info::stream_id_t stream_id);
+		std::shared_ptr<ApplicationWorker> GetLowestLoadWorker();
+
+		void MapStreamToWorker(const std::shared_ptr<info::Stream> &info);
+		void UnmapStreamToWorker(const std::shared_ptr<info::Stream> &info);
 
 		uint32_t		_application_worker_count;
 		std::shared_mutex _application_worker_lock;
 		std::vector<std::shared_ptr<ApplicationWorker>>	_application_workers;
+		// stream_id : worker_id
+		std::map<info::stream_id_t, uint32_t> _stream_app_worker_map;
+		std::shared_mutex _stream_app_worker_map_lock;
 
 		std::shared_ptr<Publisher>		_publisher;
 	};
 
-
-	#define PUSH_PUBLISHER_ERROR_DOMAIN "PublisherPushApplication"
-
-	class PushApplication : public Application
-	{
-	public:
-		enum ErrorCode
-		{
-			Success,
-			FailureInvalidParameter,
-			FailureDuplicateKey,
-			FailureNotExist,
-			FailureUnknown
-		};
-
-		explicit PushApplication(const std::shared_ptr<Publisher> &publisher, const info::Application &application_info);
-
-		virtual bool Start();
-		virtual bool Stop();
-
-		virtual std::shared_ptr<ov::Error> StartPush(const std::shared_ptr<info::Push> &push);
-		virtual std::shared_ptr<ov::Error> StopPush(const std::shared_ptr<info::Push> &push);
-		virtual std::shared_ptr<ov::Error> GetPushes(const std::shared_ptr<info::Push> push, std::vector<std::shared_ptr<info::Push>> &results);
-
-		std::shared_ptr<info::Push> GetPushInfoById(ov::String id);
-		void StartPushInternal(const std::shared_ptr<info::Push> &push, std::shared_ptr<pub::Session> session);
-		void StopPushInternal(const std::shared_ptr<info::Push> &push, std::shared_ptr<pub::Session> session);
-		void SessionControlThread();
-
-		std::atomic<bool> _session_control_stop_thread_flag = false;
-		std::thread _session_contol_thread;
-
-		// <uniqueId, pushInfo>
-		std::map<ov::String, std::shared_ptr<info::Push>> _pushes;
-		std::shared_mutex _push_map_mutex;
-	};
 }  // namespace pub

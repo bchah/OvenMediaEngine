@@ -31,6 +31,7 @@ extern "C"
 
 #include <base/common_types.h>
 #include <base/info/media_track.h>
+#include <base/info/push.h>
 #include <base/mediarouter/media_type.h>
 #include <base/ovlibrary/ovlibrary.h>
 #include <transcoder/transcoder_context.h>
@@ -38,6 +39,7 @@ extern "C"
 #include <modules/bitstream/h264/h264_decoder_configuration_record.h>
 #include <modules/bitstream/h265/h265_decoder_configuration_record.h>
 #include <modules/bitstream/aac/audio_specific_config.h>
+#include <modules/bitstream/opus/opus_specific_config.h>
 
 namespace ffmpeg
 {
@@ -382,54 +384,80 @@ namespace ffmpeg
 			{
 				case cmn::MediaCodecId::H264:
 				{
-					// AVCC format
-					auto avc_config = std::make_shared<AVCDecoderConfigurationRecord>();
-					auto extra_data = std::make_shared<ov::Data>(stream->codecpar->extradata, stream->codecpar->extradata_size, true);
-
-					if (avc_config->Parse(extra_data) == false)
+					if (stream->codecpar->extradata_size > 0)
 					{
-						return false;
+						// AVCC format
+						auto avc_config = std::make_shared<AVCDecoderConfigurationRecord>();
+						auto extra_data = std::make_shared<ov::Data>(stream->codecpar->extradata, stream->codecpar->extradata_size, true);
+
+						if (avc_config->Parse(extra_data) == false)
+						{
+							return false;
+						}
+
+						media_track->SetDecoderConfigurationRecord(avc_config);
 					}
 
-					media_track->SetDecoderConfigurationRecord(avc_config);
 					
 					break;
 				}
 				case cmn::MediaCodecId::H265:
 				{
-					// HVCC format
-					auto hevc_config = std::make_shared<HEVCDecoderConfigurationRecord>();
-					auto extra_data = std::make_shared<ov::Data>(stream->codecpar->extradata, stream->codecpar->extradata_size, true);
-
-					if (hevc_config->Parse(extra_data) == false)
+					if (stream->codecpar->extradata_size > 0)
 					{
-						return false;
-					}
+						// HVCC format
+						auto hevc_config = std::make_shared<HEVCDecoderConfigurationRecord>();
+						auto extra_data = std::make_shared<ov::Data>(stream->codecpar->extradata, stream->codecpar->extradata_size, true);
 
-					media_track->SetDecoderConfigurationRecord(hevc_config);
+						if (hevc_config->Parse(extra_data) == false)
+						{
+							return false;
+						}
+
+						media_track->SetDecoderConfigurationRecord(hevc_config);
+					}
 
 					break;
 				}
 				case cmn::MediaCodecId::Aac:
 				{
-					// ASC format
-					auto asc = std::make_shared<AudioSpecificConfig>();
-					auto extra_data = std::make_shared<ov::Data>(stream->codecpar->extradata, stream->codecpar->extradata_size, true);
-
-					if (asc->Parse(extra_data) == false)
+					if (stream->codecpar->extradata_size > 0)
 					{
-						return false;
+						// ASC format
+						auto asc = std::make_shared<AudioSpecificConfig>();
+						auto extra_data = std::make_shared<ov::Data>(stream->codecpar->extradata, stream->codecpar->extradata_size, true);
+
+						if (asc->Parse(extra_data) == false)
+						{
+							return false;
+						}
+
+						media_track->SetDecoderConfigurationRecord(asc);
 					}
-					
-					media_track->SetDecoderConfigurationRecord(asc);
 
 					break;
 				}
-				case cmn::MediaCodecId::Vp8:
+				case cmn::MediaCodecId::Opus:
+				{
+					if (stream->codecpar->extradata_size > 0)
+					{
+						// ASC format
+						auto opus_config = std::make_shared<OpusSpecificConfig>();
+						auto extra_data = std::make_shared<ov::Data>(stream->codecpar->extradata, stream->codecpar->extradata_size, true);
+
+						if (opus_config->Parse(extra_data) == false)
+						{
+							return false;
+						}
+
+						media_track->SetDecoderConfigurationRecord(opus_config);
+					}
+
+					break;
+				}				case cmn::MediaCodecId::Vp8:
 				case cmn::MediaCodecId::Vp9:
 				case cmn::MediaCodecId::Flv:
 				case cmn::MediaCodecId::Mp3:
-				case cmn::MediaCodecId::Opus:
 				case cmn::MediaCodecId::Jpeg:
 				case cmn::MediaCodecId::Png:
 				default:
@@ -730,8 +758,8 @@ namespace ffmpeg
 				return false;
 			}
 
+			av_stream->start_time = 0;
 			av_stream->time_base = AVRational{media_track->GetTimeBase().GetNum(), media_track->GetTimeBase().GetDen()};
-
 			AVCodecParameters* codecpar = av_stream->codecpar;
 			codecpar->codec_type 		= ToAVMediaType(media_track->GetMediaType());
 			codecpar->codec_id 			= ToAVCodecId(media_track->GetCodecId());
@@ -769,6 +797,11 @@ namespace ffmpeg
 				}
 				break;
 
+				case cmn::MediaType::Data:
+				{
+					codecpar->codec_id = AV_CODEC_ID_NONE;
+				}
+				break;
 				default:
 					return false;
 			}
@@ -776,7 +809,12 @@ namespace ffmpeg
 			return true;
 		}
 
-		static ov::String GetFormatByExtension(ov::String extension, ov::String default_format)
+		static ov::String GetCodecName(AVCodecID codec_id)
+		{
+			return ov::String::FormatString("%s", ::avcodec_get_name(codec_id));
+		}
+
+		static ov::String GetFormatByExtension(ov::String extension, ov::String default_format = "mpegts")
 		{
 			if (extension == "mp4")
 			{
@@ -789,6 +827,23 @@ namespace ffmpeg
 			else if (extension == "webm")
 			{
 				return "webm";
+			}
+
+			return default_format;
+		}
+
+		static ov::String GetFormatByProtocolType(const info::Push::ProtocolType protocol_type, ov::String default_format = "flv")
+		{
+			switch (protocol_type)
+			{
+				case info::Push::ProtocolType::RTMP:
+					return "flv";
+				case info::Push::ProtocolType::MPEGTS:
+					return "mpegts";
+				case info::Push::ProtocolType::SRT:
+					return "mpegts";
+				default:
+					break;
 			}
 
 			return default_format;
@@ -831,6 +886,98 @@ namespace ffmpeg
 			}
 
 			return false;
+		}
+
+		static bool SetHwDeviceCtxOfAVCodecContext(AVCodecContext* context, AVBufferRef* hw_device_ctx)
+		{
+			context->hw_device_ctx = ::av_buffer_ref(hw_device_ctx);
+			if (context->hw_device_ctx == nullptr)
+			{
+				return false;
+			}
+
+			return true;
+		}
+
+		static bool SetHWFramesCtxOfAVCodecContext(AVCodecContext* context)
+		{
+			AVBufferRef* hw_frames_ref;
+			int err = 0;
+			if (!(hw_frames_ref = ::av_hwframe_ctx_alloc(context->hw_device_ctx)))
+			{
+				return false;
+			}
+
+			auto constraints = ::av_hwdevice_get_hwframe_constraints(context->hw_device_ctx, nullptr);
+			if(constraints == nullptr)
+			{
+				return false;
+			}
+
+			AVHWFramesContext* frames_ctx = nullptr;
+			frames_ctx = (AVHWFramesContext*)(hw_frames_ref->data);
+			frames_ctx->format = *(constraints->valid_hw_formats);
+			frames_ctx->sw_format = *(constraints->valid_sw_formats);;
+			frames_ctx->width = context->width;
+			frames_ctx->height = context->height;
+			frames_ctx->initial_pool_size = 10;
+			
+			if ((err = ::av_hwframe_ctx_init(hw_frames_ref)) < 0)
+			{
+				::av_buffer_unref(&hw_frames_ref);
+				return false;
+			}
+
+			context->hw_frames_ctx = ::av_buffer_ref(hw_frames_ref);
+			
+			if (!context->hw_frames_ctx)
+				err = AVERROR(ENOMEM);
+			
+			::av_buffer_unref(&hw_frames_ref);
+
+			return true;
+		}
+
+		static bool SetHwDeviceCtxOfAVFilterContext(AVFilterContext* context, AVBufferRef* hw_device_ctx)
+		{
+			context->hw_device_ctx = ::av_buffer_ref(hw_device_ctx);
+			if (context->hw_device_ctx == nullptr)
+			{
+				return false;
+			}
+
+			return true;
+		}
+		static bool SetHWFramesCtxOfAVFilterLink(AVFilterLink* context, AVBufferRef* hw_device_ctx, int32_t width, int32_t height)
+		{
+			AVBufferRef* hw_frames_ref;
+			AVHWFramesContext* frames_ctx = NULL;
+
+			if (!(hw_frames_ref = av_hwframe_ctx_alloc(hw_device_ctx)))
+			{
+				return false;
+			}
+
+			auto constraints = av_hwdevice_get_hwframe_constraints(hw_device_ctx, nullptr);
+
+			frames_ctx = (AVHWFramesContext*)(hw_frames_ref->data);
+			frames_ctx->format = *(constraints->valid_hw_formats);
+			frames_ctx->sw_format = *(constraints->valid_sw_formats);
+			frames_ctx->width = width;
+			frames_ctx->height = height;
+			frames_ctx->initial_pool_size = 10;
+
+			if (av_hwframe_ctx_init(hw_frames_ref) < 0)
+			{
+				av_buffer_unref(&hw_frames_ref);
+				return false;
+			}
+
+			context->hw_frames_ctx = av_buffer_ref(hw_frames_ref);
+
+			av_buffer_unref(&hw_frames_ref);
+
+			return true;
 		}
 	};
 

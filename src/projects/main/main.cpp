@@ -103,7 +103,7 @@ int main(int argc, char *argv[])
 	if (SDPRegexPattern::GetInstance()->Compile() == false)
 	{
 		OV_ASSERT(false, "SDPRegexPattern compile failed");
-		return false;
+		return -1;
 	}
 
 	logti("This host supports %s", ov::ipv6::Checker::GetInstance()->ToString().CStr());
@@ -128,15 +128,12 @@ int main(int argc, char *argv[])
 	// Initialize Publishers
 	INIT_MODULE(webrtc_publisher, "WebRTC Publisher", WebRtcPublisher::Create(*server_config, media_router));
 	INIT_MODULE(llhls_publisher, "LLHLS Publisher", LLHlsPublisher::Create(*server_config, media_router));
-	INIT_MODULE(hls_publisher, "HLS Publisher", HlsPublisher::Create(*server_config, media_router));
-	INIT_MODULE(dash_publisher, "MPEG-DASH Publisher", DashPublisher::Create(*server_config, media_router));
-	INIT_MODULE(lldash_publisher, "Low-Latency MPEG-DASH Publisher", CmafPublisher::Create(*server_config, media_router));
 	INIT_MODULE(ovt_publisher, "OVT Publisher", OvtPublisher::Create(*server_config, media_router));
 	INIT_MODULE(file_publisher, "File Publisher", pub::FilePublisher::Create(*server_config, media_router));
-	INIT_MODULE(mpegtspush_publisher, "MpegtsPush Publisher", MpegtsPushPublisher::Create(*server_config, media_router));
-	INIT_MODULE(rtmppush_publisher, "RtmpPush Publisher", RtmpPushPublisher::Create(*server_config, media_router));
-	INIT_MODULE(srtpush_publisher, "SrtPush Publisher", SrtPushPublisher::Create(*server_config, media_router));
+	INIT_MODULE(push_publisher, "Push Publisher", pub::PushPublisher::Create(*server_config, media_router));
 	INIT_MODULE(thumbnail_publisher, "Thumbnail Publisher", ThumbnailPublisher::Create(*server_config, media_router));
+	INIT_MODULE(hls_publisher, "HLS Publisher", HlsPublisher::Create(*server_config, media_router));
+	INIT_MODULE(srt_publisher, "SRT Publisher", pub::SrtPublisher::Create(*server_config, media_router));
 
 	// Initialize Transcoder
 	INIT_MODULE(transcoder, "Transcoder", Transcoder::Create(media_router));
@@ -195,15 +192,12 @@ int main(int argc, char *argv[])
 
 	RELEASE_MODULE(webrtc_publisher, "WebRTC Publisher");
 	RELEASE_MODULE(llhls_publisher, "LLHLS Publisher");
-	RELEASE_MODULE(hls_publisher, "HLS Publisher");
-	RELEASE_MODULE(dash_publisher, "MPEG-DASH Publisher");
-	RELEASE_MODULE(lldash_publisher, "Low-Latency MPEG-DASH Publisher");
 	RELEASE_MODULE(ovt_publisher, "OVT Publisher");
 	RELEASE_MODULE(file_publisher, "File Publisher");
-	RELEASE_MODULE(mpegtspush_publisher, "MpegtsPush Publisher");
-	RELEASE_MODULE(rtmppush_publisher, "RtmpPush Publisher");
-	RELEASE_MODULE(srtpush_publisher, "SrtPush Publisher");
+	RELEASE_MODULE(push_publisher, "Push Publisher");	
 	RELEASE_MODULE(thumbnail_publisher, "Thumbnail Publisher");
+	RELEASE_MODULE(hls_publisher, "HLS Publisher");
+	RELEASE_MODULE(srt_publisher, "SRT Publisher");
 
 	RELEASE_MODULE(media_router, "MediaRouter");
 

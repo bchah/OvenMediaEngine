@@ -112,7 +112,31 @@ static const char *GetSignalName(int signum)
 static char g_ome_version[1024];
 
 typedef void (*OV_SIG_ACTION)(int signum, siginfo_t *si, void *unused);
+struct sigaction GetSigAction(OV_SIG_ACTION action)
+{
+	struct sigaction sa
+	{
+	};
 
+	sa.sa_flags = SA_SIGINFO;
+
+	// sigemptyset is a macro on macOS, so :: breaks compilation
+#if defined(__APPLE__)
+	sigemptyset(&sa.sa_mask);
+#else
+	::sigemptyset(&sa.sa_mask);
+#endif
+
+	sa.sa_sigaction = action;
+
+	return sa;
+}
+
+// Configure for abort signals
+//
+// Intentional signals (ignore)
+//     SIGQUIT, SIGINT, SIGTERM, SIGTRAP, SIGHUP, SIGKILL
+//     SIGVTALRM, SIGPROF, SIGALRM
 static void AbortHandler(int signum, siginfo_t *si, void *context)
 {
 	char time_buffer[30]{};
@@ -203,90 +227,7 @@ static void AbortHandler(int signum, siginfo_t *si, void *context)
 	::exit(signum);
 }
 
-static void User1Handler(int signum, siginfo_t *si, void *unused)
-{
-	logtc("Trim result: %d", malloc_trim(0));
-}
-
-static void ReloadHandler(int signum, siginfo_t *si, void *unused)
-{
-	logti("Trying to reload configuration...");
-
-	auto config_manager = cfg::ConfigManager::GetInstance();
-
-	try
-	{
-		config_manager->ReloadConfigs();
-	}
-	catch (const cfg::ConfigError &error)
-	{
-		logte("An error occurred while reload configuration: %s", error.What());
-		return;
-	}
-
-	logti("Trying to apply OriginMap to Orchestrator...");
-
-	std::vector<info::Host> host_info_list;
-	// Create info::Host
-	auto server_config = config_manager->GetServer();
-	auto hosts = server_config->GetVirtualHostList();
-	for (const auto &host : hosts)
-	{
-		host_info_list.emplace_back(info::Host(server_config->GetName(), server_config->GetID(), host));
-	}
-
-	if (ocst::Orchestrator::GetInstance()->UpdateVirtualHosts(host_info_list) == false)
-	{
-		logte("Could not reload OriginMap");
-	}
-}
-
-void TerminateHandler(int signum, siginfo_t *si, void *unused)
-{
-	static constexpr int TERMINATE_COUNT = 3;
-	static int signal_count = 0;
-
-	signal_count++;
-
-	if (signal_count == TERMINATE_COUNT)
-	{
-		logtc("The termination request has been made %d times. OME is forcibly terminated.", TERMINATE_COUNT, signum);
-		exit(1);
-	}
-	else
-	{
-		logtc("Caught terminate signal %d. Trying to terminating... (Repeat %d more times to forcibly terminate)", signum, (TERMINATE_COUNT - signal_count));
-	}
-
-	g_is_terminated = true;
-}
-
-struct sigaction GetSigAction(OV_SIG_ACTION action)
-{
-	struct sigaction sa
-	{
-	};
-
-	sa.sa_flags = SA_SIGINFO;
-
-	// sigemptyset is a macro on macOS, so :: breaks compilation
-#if defined(__APPLE__)
-	sigemptyset(&sa.sa_mask);
-#else
-	::sigemptyset(&sa.sa_mask);
-#endif
-
-	sa.sa_sigaction = action;
-
-	return sa;
-}
-
-// Configure abort signal
-//
-// Intentional signals (ignore)
-//     SIGQUIT, SIGINT, SIGTERM, SIGTRAP, SIGHUP, SIGKILL
-//     SIGVTALRM, SIGPROF, SIGALRM
-bool InitializeAbortSignal()
+static bool InitializeForAbortSignals()
 {
 	::memset(g_ome_version, 0, sizeof(g_ome_version));
 	::strncpy(g_ome_version, info::OmeVersion::GetInstance()->ToString().CStr(), OV_COUNTOF(g_ome_version) - 1);
@@ -313,40 +254,100 @@ bool InitializeAbortSignal()
 	return result;
 }
 
-// Configure SIGUSR1 signal
+// Configure for SIGUSR1
 // WARNING: USE THIS SIGNAL FOR DEBUGGING PURPOSE ONLY
-bool InitializeUser1Signal()
+static void SigUsr1Handler(int signum, siginfo_t *si, void *unused)
 {
-	auto sa = GetSigAction(User1Handler);
-	bool result = true;
-
-	result = result && (::sigaction(SIGUSR1, &sa, nullptr) == 0);
-
-	return result;
+	logtc("Trim result: %d", malloc_trim(0));
 }
 
-// Configure reload signal
-bool InitializeReloadSignal()
+static bool InitializeForSigUsr1()
 {
-	auto sa = GetSigAction(ReloadHandler);
-	bool result = true;
-
-	result = result && (::sigaction(SIGHUP, &sa, nullptr) == 0);
-
-	return result;
+	auto sa = GetSigAction(SigUsr1Handler);
+	return (::sigaction(SIGUSR1, &sa, nullptr) == 0);
 }
 
-// Configure terminate signal
-bool InitializeTerminateSignal()
+// Configure for SIGHUP
+static void SigHupHandler(int signum, siginfo_t *si, void *unused)
 {
-	auto sa = GetSigAction(TerminateHandler);
-	bool result = true;
+	logti("Received SIGHUP signal. This signal is not implemented yet.");
+	return;
 
-	result = result && (::sigaction(SIGINT, &sa, nullptr) == 0);
+	// logti("Trying to reload configuration...");
 
-	g_is_terminated = false;
+	// auto config_manager = cfg::ConfigManager::GetInstance();
 
-	return result;
+	// try
+	// {
+	// 	config_manager->ReloadConfigs();
+	// }
+	// catch (const cfg::ConfigError &error)
+	// {
+	// 	logte("An error occurred while reload configuration: %s", error.What());
+	// 	return;
+	// }
+
+	// logti("Trying to apply OriginMap to Orchestrator...");
+
+	// std::vector<info::Host> host_info_list;
+	// // Create info::Host
+	// auto server_config = config_manager->GetServer();
+	// auto hosts = server_config->GetVirtualHostList();
+	// for (const auto &host : hosts)
+	// {
+	// 	host_info_list.emplace_back(info::Host(server_config->GetName(), server_config->GetID(), host));
+	// }
+
+	// if (ocst::Orchestrator::GetInstance()->UpdateVirtualHosts(host_info_list) == false)
+	// {
+	// 	logte("Could not reload OriginMap");
+	// }
+}
+
+static bool InitializeForSigHup()
+{
+	auto sa = GetSigAction(SigHupHandler);
+	return (::sigaction(SIGHUP, &sa, nullptr) == 0);
+}
+
+// Configure for SIGTERM
+static void SigTermHandler(int signum, siginfo_t *si, void *unused)
+{
+	logtw("Caught terminate signal %d. OME is terminating...", signum);
+	g_is_terminated = true;
+}
+
+static bool InitializeForSigTerm()
+{
+	auto sa = GetSigAction(SigTermHandler);
+	return (::sigaction(SIGTERM, &sa, nullptr) == 0);
+}
+
+// Configure for SIGINT
+static void SigIntHandler(int signum, siginfo_t *si, void *unused)
+{
+	static constexpr int TERMINATE_COUNT = 3;
+	static int signal_count = 0;
+
+	signal_count++;
+
+	if (signal_count == TERMINATE_COUNT)
+	{
+		logtc("The termination request has been made %d times. OME is forcibly terminated.", TERMINATE_COUNT, signum);
+		exit(1);
+	}
+	else
+	{
+		logtc("Caught terminate signal %d. Trying to terminating... (Repeat %d more times to forcibly terminate)", signum, (TERMINATE_COUNT - signal_count));
+	}
+
+	g_is_terminated = true;
+}
+
+static bool InitializeForSigInt()
+{
+	auto sa = GetSigAction(SigIntHandler);
+	return (::sigaction(SIGINT, &sa, nullptr) == 0);
 }
 
 bool InitializeSignals()
@@ -365,8 +366,11 @@ bool InitializeSignals()
 	//	58) SIGRTMAX-6	59) SIGRTMAX-5	60) SIGRTMAX-4	61) SIGRTMAX-3	62) SIGRTMAX-2
 	//	63) SIGRTMAX-1	64) SIGRTMAX
 
-	return InitializeAbortSignal() &&
-		   InitializeUser1Signal() &&
-		   InitializeReloadSignal() &&
-		   InitializeTerminateSignal();
+	g_is_terminated = false;
+
+	return InitializeForAbortSignals() &&
+		   InitializeForSigUsr1() &&
+		   InitializeForSigHup() &&
+		   InitializeForSigTerm() &&
+		   InitializeForSigInt();
 }

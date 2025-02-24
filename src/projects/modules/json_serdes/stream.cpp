@@ -35,10 +35,20 @@ namespace serdes
 			SetInt(object, "width", track->GetWidth());
 			SetInt(object, "height", track->GetHeight());
 			SetString(object, "bitrate", ov::Converter::ToString(track->GetBitrate()), Optional::False);
+			SetString(object, "bitrateConf", ov::Converter::ToString(track->GetBitrateByConfig()), Optional::False);
+			SetString(object, "bitrateAvg", ov::Converter::ToString(track->GetBitrateByMeasured()), Optional::False);
+			SetString(object, "bitrateLatest", ov::Converter::ToString(track->GetBitrateLastSecond()), Optional::False);
 			SetFloat(object, "framerate", track->GetFrameRate());
+			SetFloat(object, "framerateConf", track->GetFrameRateByConfig());
+			SetFloat(object, "framerateAvg", track->GetFrameRateByMeasured());
+			SetFloat(object, "framerateLatest", track->GetFrameRateLastSecond());
 			SetTimebase(object, "timebase", track->GetTimeBase(), Optional::False);
 			SetBool(object, "hasBframes", track->HasBframes());
 			SetInt(object, "keyFrameInterval", track->GetKeyFrameInterval());
+			SetFloat(object, "keyFrameIntervalConf", track->GetKeyFrameIntervalByConfig());
+			SetFloat(object, "keyFrameIntervalAvg", track->GetKeyFrameIntervalByMeasured());
+			SetInt(object, "keyFrameIntervalLatest", track->GetKeyFrameIntervalLatest());
+			SetInt(object, "deltaFramesSinceLastKeyFrame", track->GetDeltaFramesSinceLastKeyFrame());
 		}
 	}
 
@@ -63,6 +73,9 @@ namespace serdes
 			// SetAudioChannel(object, "channel", track->GetChannel(), Optional::False);
 			SetInt(object, "channel", track->GetChannel().GetCounts());
 			SetString(object, "bitrate", ov::Converter::ToString(track->GetBitrate()), Optional::False);
+			SetString(object, "bitrateConf", ov::Converter::ToString(track->GetBitrateByConfig()), Optional::False);
+			SetString(object, "bitrateAvg", ov::Converter::ToString(track->GetBitrateByMeasured()), Optional::False);
+			SetString(object, "bitrateLatest", ov::Converter::ToString(track->GetBitrateLastSecond()), Optional::False);
 			SetTimebase(object, "timebase", track->GetTimeBase(), Optional::False);
 		}
 	}
@@ -113,6 +126,50 @@ namespace serdes
 		}
 	}
 
+	static void SetRenditions(Json::Value &parent_object, const char *key, const std::vector<std::shared_ptr<info::Rendition>> &renditions, Optional optional)
+	{
+		CONVERTER_RETURN_IF(false, Json::arrayValue);
+
+		for (auto &rendition : renditions)
+		{
+			Json::Value rendition_value;
+
+			SetString(rendition_value, "name", rendition->GetName(), Optional::False);
+			SetString(rendition_value, "videoVariantName", rendition->GetVideoVariantName(), Optional::False);
+			SetString(rendition_value, "audioVariantName", rendition->GetAudioVariantName(), Optional::False);
+
+			object.append(rendition_value);
+		}
+	}
+
+	static void SetOptions(Json::Value &parent_object, const char *key, const std::shared_ptr<info::Playlist> &playlist, Optional optional)
+	{
+		CONVERTER_RETURN_IF(false, Json::objectValue);
+
+		object["webrtcAutoAbr"] = playlist->IsWebRtcAutoAbr();
+		object["hlsChunklistPathDepth"] = playlist->GetHlsChunklistPathDepth();
+		object["enableTsPackaging"] = playlist->IsTsPackagingEnabled();
+	}
+
+	static void SetPlaylists(Json::Value &parent_object, const char *key, const std::map<ov::String, std::shared_ptr<info::Playlist>> &playlist, Optional optional)
+	{
+		CONVERTER_RETURN_IF(false, Json::arrayValue);
+
+		for (auto &item : playlist)
+		{
+			auto &playlist = item.second;
+
+			Json::Value playlist_value;
+
+			SetString(playlist_value, "name", playlist->GetName(), Optional::False);
+			SetString(playlist_value, "fileName", playlist->GetFileName(), Optional::False);
+			SetOptions(playlist_value, "options", playlist, Optional::True);
+			SetRenditions(playlist_value, "renditions", playlist->GetRenditionList(), Optional::True);
+
+			object.append(playlist_value);
+		}
+	}
+
 	static void SetInputStream(Json::Value &parent_object, const char *key, const std::shared_ptr<const mon::StreamMetrics> &stream, Optional optional)
 	{
 		auto common_metrics = std::static_pointer_cast<const mon::CommonMetrics>(stream);
@@ -137,6 +194,7 @@ namespace serdes
 
 			SetString(output_value, "name", output_stream->GetName(), Optional::False);
 			SetTracks(output_value, "tracks", output_stream->GetTracks(), Optional::False);
+			SetPlaylists(output_value, "playlists", output_stream->GetPlaylists(), Optional::True);
 
 			object.append(output_value);
 		}
@@ -171,7 +229,7 @@ namespace serdes
 		SetString(response, "name", stream->GetName(), Optional::False);
 		SetInputStream(response, "input", stream, Optional::False);
 		SetOutputStreams(response, "outputs", output_streams, Optional::False);
-
+		
 		return response;
 	}
 }  // namespace serdes

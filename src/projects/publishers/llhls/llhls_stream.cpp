@@ -15,7 +15,6 @@
 
 #include <base/publisher/application.h>
 #include <base/publisher/stream.h>
-#include <modules/cpix_client/pallycon.h>
 
 #include "llhls_application.h"
 #include "llhls_session.h"
@@ -35,6 +34,11 @@ LLHlsStream::LLHlsStream(const std::shared_ptr<pub::Application> application, co
 LLHlsStream::~LLHlsStream()
 {
 	logtd("LLHlsStream(%s/%s) has been terminated finally", GetApplicationName(), GetName().CStr());
+}
+
+ov::String LLHlsStream::GetStreamId() const
+{
+	return ov::String::FormatString("llhls/%s", GetUri().CStr());
 }
 
 bool LLHlsStream::Start()
@@ -75,6 +79,11 @@ bool LLHlsStream::Start()
 	// cenc property will be set in AddPackager
 
 	_storage_config.max_segments = llhls_config.GetSegmentCount();
+	if (_storage_config.max_segments < 3)
+	{
+		logtw("LLHlsStream(%s/%s) - Segment count should be at least 3, Set to 3", GetApplication()->GetVHostAppName().CStr(), GetName().CStr());
+		_storage_config.max_segments = 3;
+	}
 	_storage_config.segment_duration_ms = llhls_config.GetSegmentDuration() * 1000;
 	_storage_config.dvr_enabled = dvr_config.IsEnabled();
 	_storage_config.dvr_storage_path = dvr_config.GetTempStoragePath();
@@ -94,7 +103,7 @@ bool LLHlsStream::Start()
 		{
 			if (AddPackager(track, data_track) == false)
 			{
-				logte("LLHlsStream(%s/%s) - Failed to add packager for track(%ld)", GetApplication()->GetName().CStr(), GetName().CStr(), track->GetId());
+				logte("LLHlsStream(%s/%s) - Failed to add packager for track(%ld)", GetApplication()->GetVHostAppName().CStr(), GetName().CStr(), track->GetId());
 				return false;
 			}
 
@@ -115,7 +124,7 @@ bool LLHlsStream::Start()
 				continue;
 			}
 
-			logti("LLHlsStream(%s/%s) - Ignore unsupported codec(%s)", GetApplication()->GetName().CStr(), GetName().CStr(), StringFromMediaCodecId(track->GetCodecId()).CStr());
+			logti("LLHlsStream(%s/%s) - Ignore unsupported codec(%s)", GetApplication()->GetVHostAppName().CStr(), GetName().CStr(), StringFromMediaCodecId(track->GetCodecId()).CStr());
 			continue;
 		}
 	}
@@ -132,25 +141,42 @@ bool LLHlsStream::Start()
 
 	if (first_video_track == nullptr && first_audio_track == nullptr)
 	{
-		logtw("LLHLS stream [%s/%s] could not be created because there is no supported codec.", GetApplication()->GetName().CStr(), GetName().CStr());
+		logtw("LLHLS stream [%s/%s] could not be created because there is no supported codec.", GetApplication()->GetVHostAppName().CStr(), GetName().CStr());
 		return false;
 	}
 
-	// If there is no default playlist, make default playlist
-	// Default playlist is consist of first compatible video and audio track among all tracks
-	ov::String default_playlist_name = DEFAULT_PLAYLIST_NAME;
-	auto default_playlist_name_without_ext = default_playlist_name.Substring(0, default_playlist_name.IndexOfRev('.'));
-	auto default_playlist = Stream::GetPlaylist(default_playlist_name_without_ext);
-	if (default_playlist == nullptr)
+
+	if (llhls_config.ShouldCreateDefaultPlaylist() == true)
 	{
-		auto playlist = std::make_shared<info::Playlist>("default", default_playlist_name_without_ext);
-		auto rendition = std::make_shared<info::Rendition>("default", first_video_track ? first_video_track->GetVariantName() : "", first_audio_track ? first_audio_track->GetVariantName() : "");
+		// If there is no default playlist, make default playlist
+		// Default playlist is consist of first compatible video and audio track among all tracks
+		ov::String default_playlist_name = DEFAULT_PLAYLIST_NAME;
+		auto default_playlist_name_without_ext = default_playlist_name.Substring(0, default_playlist_name.IndexOfRev('.'));
+		auto default_playlist = Stream::GetPlaylist(default_playlist_name_without_ext);
+		if (default_playlist == nullptr)
+		{
+			auto playlist = std::make_shared<info::Playlist>("llhls_default", default_playlist_name_without_ext);
+			auto rendition = std::make_shared<info::Rendition>("default", first_video_track ? first_video_track->GetVariantName() : "", first_audio_track ? first_audio_track->GetVariantName() : "");
 
-		playlist->AddRendition(rendition);
-		auto master_playlist = CreateMasterPlaylist(playlist);
+			playlist->AddRendition(rendition);
 
-		std::lock_guard<std::mutex> guard(_master_playlists_lock);
-		_master_playlists[default_playlist_name] = master_playlist;
+			AddPlaylist(playlist);
+
+			auto master_playlist = CreateMasterPlaylist(playlist);
+
+			std::lock_guard<std::mutex> guard(_master_playlists_lock);
+			_master_playlists[default_playlist_name] = master_playlist;
+		}
+	}
+	else
+	{
+		logti("LLHLS stream [%s/%s] - Default playlist creation is disabled.", GetApplication()->GetVHostAppName().CStr(), GetName().CStr());
+		if (GetPlaylists().size() == 0)
+		{
+			logtw("LLHLS stream [%s/%s] - There is no playlist, LLHLS will not work for this stream", GetApplication()->GetVHostAppName().CStr(), GetName().CStr());
+			Stop(); // Release all resources
+			return false;
+		}
 	}
 
 	// Select the dump setting for this stream.
@@ -169,8 +195,8 @@ bool LLHlsStream::Start()
 			// Replace output path with macro
 			auto output_path = dump.GetOutputPath();
 			// ${VHostName}, ${AppName}, ${StreamName}
-			output_path = output_path.Replace("${VHostName}", GetApplication()->GetName().GetVHostName().CStr());
-			output_path = output_path.Replace("${AppName}", GetApplication()->GetName().GetAppName().CStr());
+			output_path = output_path.Replace("${VHostName}", GetApplication()->GetVHostAppName().GetVHostName().CStr());
+			output_path = output_path.Replace("${AppName}", GetApplication()->GetVHostAppName().GetAppName().CStr());
 			output_path = output_path.Replace("${StreamName}", GetName().CStr());
 
 			// ${YYYY}, ${MM}, ${DD}, ${hh}, ${mm}, ${ss}
@@ -210,7 +236,7 @@ bool LLHlsStream::Start()
 		}
 	}
 
-	logti("LLHlsStream has been created : %s/%u\nOriginMode(%s) Chunk Duration(%.2f) Segment Duration(%u) Segment Count(%u) DRM(%s)", GetName().CStr(), GetId(),
+	logti("LLHlsStream has been created : %s/%u\nOriginMode(%s) Chunk Duration(%.2f) Segment Duration(%.2f) Segment Count(%u) DRM(%s)", GetName().CStr(), GetId(),
 		  ov::Converter::ToString(llhls_config.IsOriginMode()).CStr(), llhls_config.GetChunkDuration(), llhls_config.GetSegmentDuration(), llhls_config.GetSegmentCount(), bmff::CencProtectSchemeToString(_cenc_property.scheme));
 
 	return Stream::Start();
@@ -250,34 +276,55 @@ bool LLHlsStream::Stop()
 	return Stream::Stop();
 }
 
+std::tuple<bool, ov::String> LLHlsStream::ConcludeLive()
+{
+	std::unique_lock<std::shared_mutex> lock(_concluded_lock);
+	if (_concluded)
+	{
+		return {false, "Already concluded"};
+	}
+
+	_concluded = true;
+
+	// Flush all packagers
+	for (auto &it : _packager_map)
+	{
+		auto packager = it.second;
+		packager->Flush();
+	}
+
+	// Append #EXT-X-ENDLIST all chunklists
+	for (auto &it : _chunklist_map)
+	{
+		auto chunklist_writer = it.second;
+		chunklist_writer->SetEndList();
+	}
+
+	return {true, ""};
+}
+
+bool LLHlsStream::IsConcluded() const
+{
+	std::shared_lock<std::shared_mutex> lock(_concluded_lock);
+	return _concluded;
+}
+
 bool LLHlsStream::GetDrmInfo(const ov::String &file_path, bmff::CencProperty &cenc_property)
 {
-	ov::String final_path;
-
-	// file_path is absolute?
-	if (file_path.Get(0) == '/' || file_path.Get(0) == '\\')
-	{
-		final_path = file_path;
-	}
-	else
-	{
-		// file_path is in config path
-		auto conf_path = cfg::ConfigManager::GetInstance()->GetConfigPath();
-		final_path = ov::String::FormatString("%s/%s", conf_path.CStr(), file_path.CStr());
-	}
+	ov::String final_path = ov::GetFilePath(file_path, cfg::ConfigManager::GetInstance()->GetConfigPath());
 
 	pugi::xml_document xml_doc;
 	auto load_result = xml_doc.load_file(final_path.CStr());
 	if (load_result == false)
 	{
-		logte("LLHlsStream(%s/%s) - Failed to load DRM info file(%s) status(%d) description(%s)", GetApplication()->GetName().CStr(), GetName().CStr(), final_path.CStr(), load_result.status, load_result.description());
+		logte("LLHlsStream(%s/%s) - Failed to load DRM info file(%s) status(%d) description(%s)", GetApplication()->GetVHostAppName().CStr(), GetName().CStr(), final_path.CStr(), load_result.status, load_result.description());
 		return false;
 	}
 
 	auto root_node = xml_doc.child("DRMInfo");
 	if (root_node.empty())
 	{
-		logte("LLHlsStream(%s/%s) - Failed to load DRM info file(%s) because root node is not found", GetApplication()->GetName().CStr(), GetName().CStr(), final_path.CStr());
+		logte("LLHlsStream(%s/%s) - Failed to load DRM info file(%s) because root node is not found", GetApplication()->GetVHostAppName().CStr(), GetName().CStr(), final_path.CStr());
 		return false;
 	}
 
@@ -294,8 +341,8 @@ bool LLHlsStream::GetDrmInfo(const ov::String &file_path, bmff::CencProperty &ce
 		ov::Regex _target_stream_name_regex = ov::Regex::CompiledRegex(ov::Regex::WildCardRegex(stream_name));
 		auto match_result = _target_stream_name_regex.Matches(GetName().CStr());
 
-		if (virtual_host_name != GetApplication()->GetName().GetVHostName() ||
-			app_name != GetApplication()->GetName().GetAppName() ||
+		if (virtual_host_name == GetApplication()->GetVHostAppName().GetVHostName() &&
+			app_name == GetApplication()->GetVHostAppName().GetAppName() &&
 			match_result.IsMatched())
 		{
 			ov::String drm_provider = drm_node.child_value("DRMProvider");
@@ -312,7 +359,7 @@ bool LLHlsStream::GetDrmInfo(const ov::String &file_path, bmff::CencProperty &ce
 				// required
 				if (cenc_protect_scheme.IsEmpty() || key_id.IsEmpty() || key.IsEmpty() || iv.IsEmpty())
 				{
-					logte("LLHlsStream(%s/%s) - Failed to load DRM info file(%s) because required field is empty", GetApplication()->GetName().CStr(), GetName().CStr(), final_path.CStr());
+					logte("LLHlsStream(%s/%s) - Failed to load DRM info file(%s) because required field is empty", GetApplication()->GetVHostAppName().CStr(), GetName().CStr(), final_path.CStr());
 					return false;
 				}
 
@@ -320,15 +367,19 @@ bool LLHlsStream::GetDrmInfo(const ov::String &file_path, bmff::CencProperty &ce
 				{
 					cenc_property.scheme = bmff::CencProtectScheme::Cbcs;
 				}
+				else if (cenc_protect_scheme == "cenc")
+				{
+					cenc_property.scheme = bmff::CencProtectScheme::Cenc;
+				}
 				else
 				{
-					logte("LLHlsStream(%s/%s) - Failed to load DRM info file(%s) because CencProtectScheme(%s) is not supported", GetApplication()->GetName().CStr(), GetName().CStr(), final_path.CStr(), cenc_protect_scheme.CStr());
+					logte("LLHlsStream(%s/%s) - Failed to load DRM info file(%s) because CencProtectScheme(%s) is not supported", GetApplication()->GetVHostAppName().CStr(), GetName().CStr(), final_path.CStr(), cenc_protect_scheme.CStr());
 				}
 
 				cenc_property.key_id = ov::Hex::Decode(key_id);
 				if (cenc_property.key_id == nullptr || cenc_property.key_id->GetLength() != 16)
 				{
-					logte("LLHlsStream(%s/%s) - Failed to load DRM info file(%s) because KeyId(%s) is invalid (must be 16 bytes HEX foramt)", GetApplication()->GetName().CStr(), GetName().CStr(), final_path.CStr(), key_id.CStr());
+					logte("LLHlsStream(%s/%s) - Failed to load DRM info file(%s) because KeyId(%s) is invalid (must be 16 bytes HEX foramt)", GetApplication()->GetVHostAppName().CStr(), GetName().CStr(), final_path.CStr(), key_id.CStr());
 					cenc_property.scheme = bmff::CencProtectScheme::None;
 					return false;
 				}
@@ -336,7 +387,7 @@ bool LLHlsStream::GetDrmInfo(const ov::String &file_path, bmff::CencProperty &ce
 				cenc_property.key = ov::Hex::Decode(key);
 				if (cenc_property.key == nullptr || cenc_property.key->GetLength() != 16)
 				{
-					logte("LLHlsStream(%s/%s) - Failed to load DRM info file(%s) because Key(%s) is invalid (must be 16 bytes HEX format)", GetApplication()->GetName().CStr(), GetName().CStr(), final_path.CStr(), key.CStr());
+					logte("LLHlsStream(%s/%s) - Failed to load DRM info file(%s) because Key(%s) is invalid (must be 16 bytes HEX format)", GetApplication()->GetVHostAppName().CStr(), GetName().CStr(), final_path.CStr(), key.CStr());
 					cenc_property.scheme = bmff::CencProtectScheme::None;
 					return false;
 				}
@@ -344,7 +395,7 @@ bool LLHlsStream::GetDrmInfo(const ov::String &file_path, bmff::CencProperty &ce
 				cenc_property.iv = ov::Hex::Decode(iv);
 				if (cenc_property.iv == nullptr || cenc_property.iv->GetLength() != 16)
 				{
-					logte("LLHlsStream(%s/%s) - Failed to load DRM info file(%s) because Iv(%s) is invalid (must be 16 bytes HEX format)", GetApplication()->GetName().CStr(), GetName().CStr(), final_path.CStr(), iv.CStr());
+					logte("LLHlsStream(%s/%s) - Failed to load DRM info file(%s) because Iv(%s) is invalid (must be 16 bytes HEX format)", GetApplication()->GetVHostAppName().CStr(), GetName().CStr(), final_path.CStr(), iv.CStr());
 					cenc_property.scheme = bmff::CencProtectScheme::None;
 					return false;
 				}
@@ -355,7 +406,7 @@ bool LLHlsStream::GetDrmInfo(const ov::String &file_path, bmff::CencProperty &ce
 					auto pssh_box_data = ov::Hex::Decode(pssh_node.child_value());
 					if (pssh_box_data == nullptr)
 					{
-						logte("LLHlsStream(%s/%s) - Failed to load DRM info file(%s) because Pssh(%s) is invalid (must be HEX format)", GetApplication()->GetName().CStr(), GetName().CStr(), final_path.CStr(), pssh_node.child_value());
+						logte("LLHlsStream(%s/%s) - Failed to load DRM info file(%s) because Pssh(%s) is invalid (must be HEX format)", GetApplication()->GetVHostAppName().CStr(), GetName().CStr(), final_path.CStr(), pssh_node.child_value());
 						cenc_property.scheme = bmff::CencProtectScheme::None;
 						return false;
 					}
@@ -374,116 +425,13 @@ bool LLHlsStream::GetDrmInfo(const ov::String &file_path, bmff::CencProperty &ce
 				cenc_property.fairplay_key_uri = fairplay_key_url;
 				cenc_property.keyformat = keyformat;
 			}
-			else if (drm_provider.LowerCaseString() == "pallycon")
-			{
-				ov::String cenc_protect_scheme = drm_node.child_value("CencProtectScheme");
-				if (cenc_protect_scheme.IsEmpty())
-				{
-					logte("LLHlsStream(%s/%s) - Failed to load DRM info file(%s) because CencProtectScheme is empty", GetApplication()->GetName().CStr(), GetName().CStr(), final_path.CStr());
-					return false;
-				}
-
-				cenc_protect_scheme = cenc_protect_scheme.Trim();
-
-				bmff::CencProtectScheme scheme_enum = bmff::CencProtectScheme::None;
-				if (cenc_protect_scheme.LowerCaseString() == "cbcs")
-				{
-					scheme_enum = bmff::CencProtectScheme::Cbcs;
-				}
-				else
-				{
-					logte("LLHlsStream(%s/%s) - Failed to load DRM info file(%s) because CencProtectScheme(%s) is not supported", GetApplication()->GetName().CStr(), GetName().CStr(), final_path.CStr(), cenc_protect_scheme.CStr());
-					return false;
-				}
-
-				ov::String content_id = drm_node.child_value("ContentId");
-				if (content_id.IsEmpty())
-				{
-					logte("LLHlsStream(%s/%s) - Failed to load DRM info file(%s) because ContentId is empty", GetApplication()->GetName().CStr(), GetName().CStr(), final_path.CStr());
-					return false;
-				}
-
-				content_id = content_id.Trim();
-
-				content_id = content_id.Replace("${VHostName}", GetApplication()->GetName().GetVHostName().CStr());
-				content_id = content_id.Replace("${AppName}", GetApplication()->GetName().GetAppName().CStr());
-				content_id = content_id.Replace("${StreamName}", GetName().CStr());
-
-				ov::String url = drm_node.child_value("KMSUrl");
-				if (url.IsEmpty())
-				{
-					logte("LLHlsStream(%s/%s) - Failed to load DRM info file(%s) because KMSUrl is empty", GetApplication()->GetName().CStr(), GetName().CStr(), final_path.CStr());
-					return false;
-				}
-
-				url = url.Trim();
-
-				ov::String token = drm_node.child_value("KMSToken");
-				if (token.IsEmpty())
-				{
-					logte("LLHlsStream(%s/%s) - Failed to load DRM info file(%s) because KMSToken is empty", GetApplication()->GetName().CStr(), GetName().CStr(), final_path.CStr());
-					return false;
-				}
-
-				token = token.Trim();
-
-				ov::String drm_system = drm_node.child_value("DRMSystem");
-				if (drm_system.IsEmpty())
-				{
-					logte("LLHlsStream(%s/%s) - Failed to load DRM info file(%s) because DRMSystem is empty", GetApplication()->GetName().CStr(), GetName().CStr(), final_path.CStr());
-					return false;
-				}
-
-				drm_system = drm_system.Trim();
-
-				bool widevine_enabled = false;
-				bool fairplay_enabled = false;
-				auto drm_system_items = drm_system.Split(",");
-				for (auto &drm_system_item : drm_system_items)
-				{
-					if (drm_system_item.LowerCaseString() == "widevine")
-					{
-						widevine_enabled = true;
-					}
-					else if (drm_system_item.LowerCaseString() == "fairplay")
-					{
-						fairplay_enabled = true;
-					}
-				}
-
-				bmff::DRMSystem drm_system_enum = bmff::DRMSystem::None;
-				if (widevine_enabled == true && fairplay_enabled == true)
-				{
-					drm_system_enum = bmff::DRMSystem::All; 
-				}
-				else if (widevine_enabled == true)
-				{
-					drm_system_enum = bmff::DRMSystem::Widevine;
-				}
-				else if (fairplay_enabled == true)
-				{
-					drm_system_enum = bmff::DRMSystem::FairPlay;
-				}
-				else
-				{
-					logte("LLHlsStream(%s/%s) - Failed to load DRM info file(%s) because DRMSystem(%s) is not supported", GetApplication()->GetName().CStr(), GetName().CStr(), final_path.CStr(), drm_system.CStr());
-					return false;
-				}
-
-				// Get DRM info from Pallycon
-				cpix::Pallycon pallycon;
-				if (pallycon.GetKeyInfo(url, token, content_id, drm_system_enum, scheme_enum, cenc_property) == false)
-				{
-					logte("LLHlsStream(%s/%s) - Failed to load DRM info file(%s) because failed to get DRM info from Pallycon", GetApplication()->GetName().CStr(), GetName().CStr(), final_path.CStr());
-					return false;
-				}
-			}
 			else
 			{
-				logte("LLHlsStream(%s/%s) - Failed to load DRM info file(%s) because DRMProvider(%s) is not supported", GetApplication()->GetName().CStr(), GetName().CStr(), final_path.CStr(), drm_provider.CStr());
+				logte("LLHlsStream(%s/%s) - Failed to load DRM info file(%s) because DRMProvider(%s) is not supported", GetApplication()->GetVHostAppName().CStr(), GetName().CStr(), final_path.CStr(), drm_provider.CStr());
 				return false;
 			}
 
+			// Just first DRM info matched is enough for one stream
 			break;
 		}
 	}
@@ -493,6 +441,20 @@ bool LLHlsStream::GetDrmInfo(const ov::String &file_path, bmff::CencProperty &ce
 	if (cenc_property.fairplay_key_uri.IsEmpty() == false && has_fairplay_pssh_box == false)
 	{
     	cenc_property.pssh_box_list.push_back(bmff::PsshBox("94ce86fb-07ff-4f43-adb8-93d2fa968ca2", {cenc_property.key_id}, nullptr));
+	}
+
+	// Set profiles
+	if (cenc_property.scheme == bmff::CencProtectScheme::Cenc)
+	{
+		cenc_property.crypt_bytes_block = 0;
+		cenc_property.skip_bytes_block = 0;
+		cenc_property.per_sample_iv_size = 16;
+	}
+	else if (cenc_property.scheme == bmff::CencProtectScheme::Cbcs)
+	{
+		cenc_property.crypt_bytes_block = 1;
+		cenc_property.skip_bytes_block = 9;
+		cenc_property.per_sample_iv_size = 0;
 	}
 
 	return true;
@@ -528,7 +490,7 @@ std::shared_ptr<LLHlsMasterPlaylist> LLHlsStream::CreateMasterPlaylist(const std
 	auto master_playlist = std::make_shared<LLHlsMasterPlaylist>();
 
 	ov::String chunk_path;
-	ov::String app_name = GetApplicationInfo().GetName().GetAppName();
+	ov::String app_name = GetApplicationInfo().GetVHostAppName().GetAppName();
 	ov::String stream_name = GetName();
 	switch (playlist->GetHlsChunklistPathDepth())
 	{
@@ -584,7 +546,7 @@ std::shared_ptr<LLHlsMasterPlaylist> LLHlsStream::CreateMasterPlaylist(const std
 		if ((video_track != nullptr && IsSupportedCodec(video_track->GetCodecId()) == false) ||
 			(audio_track != nullptr && IsSupportedCodec(audio_track->GetCodecId()) == false))
 		{
-			logtw("LLHlsStream(%s/%s) - Exclude the rendition(%s) from the %s.m3u8 due to unsupported codec", GetApplication()->GetName().CStr(), GetName().CStr(),
+			logtw("LLHlsStream(%s/%s) - Exclude the rendition(%s) from the %s.m3u8 due to unsupported codec", GetApplication()->GetVHostAppName().CStr(), GetName().CStr(),
 				  rendition->GetName().CStr(), playlist->GetFileName().CStr());
 			continue;
 		}
@@ -595,12 +557,12 @@ std::shared_ptr<LLHlsMasterPlaylist> LLHlsStream::CreateMasterPlaylist(const std
 
 		if (rendition->GetVideoVariantName().IsEmpty() == false && video_track == nullptr)
 		{
-			logtw("LLHlsStream(%s/%s) - %s video is excluded from the %s rendition in %s playlist because there is no video track.", GetApplication()->GetName().CStr(), GetName().CStr(), rendition->GetVideoVariantName().CStr(), rendition->GetName().CStr(), playlist->GetFileName().CStr());
+			logtw("LLHlsStream(%s/%s) - %s video is excluded from the %s rendition in %s playlist because there is no video track.", GetApplication()->GetVHostAppName().CStr(), GetName().CStr(), rendition->GetVideoVariantName().CStr(), rendition->GetName().CStr(), playlist->GetFileName().CStr());
 		}
 
 		if (rendition->GetAudioVariantName().IsEmpty() == false && audio_track == nullptr)
 		{
-			logtw("LLHlsStream(%s/%s) - %s audio is excluded from the %s rendition in %s playlist because there is no audio track.", GetApplication()->GetName().CStr(), GetName().CStr(), rendition->GetAudioVariantName().CStr(), rendition->GetName().CStr(), playlist->GetFileName().CStr());
+			logtw("LLHlsStream(%s/%s) - %s audio is excluded from the %s rendition in %s playlist because there is no audio track.", GetApplication()->GetVHostAppName().CStr(), GetName().CStr(), rendition->GetAudioVariantName().CStr(), rendition->GetName().CStr(), playlist->GetFileName().CStr());
 		}
 
 		master_playlist->AddStreamInfo(video_variant_name, audio_variant_name);
@@ -752,7 +714,7 @@ bool LLHlsStream::DumpSegment(const std::shared_ptr<mdl::Dump> &item, const int3
 		return false;
 	}
 
-	auto chunklist_data = chunklist->ToString("", false, true, true, item->GetFirstSegmentNumber(track_id)).ToData(false);
+	auto chunklist_data = chunklist->ToString("", false, true, false, true, item->GetFirstSegmentNumber(track_id)).ToData(false);
 
 	auto segment_file_name = GetSegmentName(track_id, segment_number);
 	auto chunklist_file_name = GetChunklistName(track_id);
@@ -977,6 +939,12 @@ bool LLHlsStream::SendBufferedPackets()
 
 void LLHlsStream::SendVideoFrame(const std::shared_ptr<MediaPacket> &media_packet)
 {
+	// If the stream is concluded, it will not be processed.
+	if (IsConcluded() == true)
+	{
+		return;
+	}
+
 	if (media_packet == nullptr || media_packet->GetData() == nullptr)
 	{
 		return;
@@ -998,6 +966,12 @@ void LLHlsStream::SendVideoFrame(const std::shared_ptr<MediaPacket> &media_packe
 
 void LLHlsStream::SendAudioFrame(const std::shared_ptr<MediaPacket> &media_packet)
 {
+	// If the stream is concluded, it will not be processed.
+	if (IsConcluded() == true)
+	{
+		return;
+	}
+
 	if (media_packet == nullptr || media_packet->GetData() == nullptr)
 	{
 		return;
@@ -1060,6 +1034,33 @@ void LLHlsStream::SendDataFrame(const std::shared_ptr<MediaPacket> &media_packet
 	}
 }
 
+void LLHlsStream::OnEvent(const std::shared_ptr<MediaEvent> &event)
+{
+	if (event == nullptr)
+	{
+		return;
+	}
+
+	switch(event->GetCommandType())
+	{
+		case MediaEvent::CommandType::ConcludeLive:
+		{
+			auto [result, message] = ConcludeLive();
+			if (result == true)
+			{
+				logti("LLHlsStream(%s/%s) - Live has concluded.", GetApplication()->GetVHostAppName().CStr(), GetName().CStr());
+			}
+			else
+			{
+				logte("LLHlsStream(%s/%s) - Failed to conclude live(%s)", GetApplication()->GetVHostAppName().CStr(), GetName().CStr(), message.CStr());
+			}
+			break;
+		}
+		default:
+			break;
+	}
+}
+
 bool LLHlsStream::AppendMediaPacket(const std::shared_ptr<MediaPacket> &media_packet)
 {
 	auto track = GetTrack(media_packet->GetTrackId());
@@ -1067,7 +1068,6 @@ bool LLHlsStream::AppendMediaPacket(const std::shared_ptr<MediaPacket> &media_pa
 	{
 		logtw("Could not find track. id: %d", media_packet->GetTrackId());
 		return false;
-		;
 	}
 
 	if (IsSupportedCodec(track->GetCodecId()) == false)
@@ -1090,12 +1090,51 @@ bool LLHlsStream::AppendMediaPacket(const std::shared_ptr<MediaPacket> &media_pa
 	return true;
 }
 
+double LLHlsStream::ComputeOptimalPartDuration(const std::shared_ptr<const MediaTrack> &track) const
+{
+	auto part_target = _packager_config.chunk_duration_ms;
+	double optimal_part_target = part_target;
+
+	if (track->GetMediaType() == cmn::MediaType::Audio)
+	{
+		// Duration of a frame is 1024 samples / sample rate
+		auto frame_duration = static_cast<double>(track->GetAudioSamplesPerFrame()) / static_cast<double>(track->GetSampleRate());
+		auto frame_duration_ms = frame_duration * 1000.0;
+
+		// Find the closest multiple of frame_duration_ms to part_target
+		auto optimal_frame_count = std::round(part_target / frame_duration_ms);
+		optimal_part_target = optimal_frame_count * frame_duration_ms;
+
+		logti("LLHlsStream::ComputeOptimalPartDuration() - Audio track(%d) SampleRate(%d) frame_duration_ms(%f) optimal_frame_count(%f) part_target(%f) optimal_part_target(%f)", track->GetId(), track->GetSampleRate(), frame_duration_ms, optimal_frame_count, part_target, optimal_part_target);
+	}
+	else if (track->GetMediaType() == cmn::MediaType::Video)
+	{
+		// Duration of a frame is 1 / frame rate
+		auto frame_duration = 1.0 / track->GetFrameRate();
+		auto frame_duration_ms = frame_duration * 1000.0;
+
+		// Find the closest multiple of frame_duration_ms to part_target
+		auto optimal_frame_count = std::round(part_target / frame_duration_ms);
+		optimal_part_target = optimal_frame_count * frame_duration_ms;
+
+		logti("LLHlsStream::ComputeOptimalPartDuration() - Video track(%d) FrameRate(%f) frame_duration_ms(%f) optimal_frame_count(%f) part_target(%f) optimal_part_target(%f)", track->GetId(), track->GetFrameRate(), frame_duration_ms, optimal_frame_count, part_target, optimal_part_target);
+	}
+
+	return optimal_part_target;
+}
+
 // Create and Get fMP4 packager with track info, storage and packager_config
 bool LLHlsStream::AddPackager(const std::shared_ptr<const MediaTrack> &media_track, const std::shared_ptr<const MediaTrack> &data_track)
 {
+	auto packager_config = _packager_config;
+
+	packager_config.chunk_duration_ms = std::round(ComputeOptimalPartDuration(media_track));
+
+	logti("LLHlsStream::AddPackager() - Track(%d) ChunkDuration(%f)", media_track->GetId(), packager_config.chunk_duration_ms);
+	
 	auto cenc_property = _cenc_property;
 
-	auto tag = ov::String::FormatString("%s/%s", GetApplicationInfo().GetName().CStr(), GetName().CStr());
+	auto tag = ov::String::FormatString("%s/%s", GetApplicationInfo().GetVHostAppName().CStr(), GetName().CStr());
 
 	if (cenc_property.scheme != bmff::CencProtectScheme::None)
 	{
@@ -1120,8 +1159,8 @@ bool LLHlsStream::AddPackager(const std::shared_ptr<const MediaTrack> &media_tra
 	auto storage = std::make_shared<bmff::FMP4Storage>(bmff::FMp4StorageObserver::GetSharedPtr(), media_track, _storage_config, tag);
 
 	// Create fMP4 Packager
-	_packager_config.cenc_property = cenc_property;
-	auto packager = std::make_shared<bmff::FMP4Packager>(storage, media_track, data_track, _packager_config);
+	packager_config.cenc_property = cenc_property;
+	auto packager = std::make_shared<bmff::FMP4Packager>(storage, media_track, data_track, packager_config);
 
 	// Create Initialization Segment
 	if (packager->CreateInitializationSegment() == false)
@@ -1132,8 +1171,17 @@ bool LLHlsStream::AddPackager(const std::shared_ptr<const MediaTrack> &media_tra
 
 	// milliseconds to seconds
 	auto segment_count = _storage_config.max_segments;
-	auto segment_duration = static_cast<float_t>(_storage_config.segment_duration_ms) / 1000.0;
-	auto chunk_duration = static_cast<float_t>(_packager_config.chunk_duration_ms) / 1000.0;
+
+	// segment_duration used for mark X-TARGETDURATION, and must rounded to the nearest integer number of seconds.
+
+        // Note that in protocol version 6, the semantics of the EXT-
+	// X-TARGETDURATION tag changed slightly.  In protocol version 5 and
+	// earlier it indicated the maximum segment duration; in protocol
+	// version 6 and later it indicates the the maximum segment duration
+	// rounded to the nearest integer number of seconds.
+
+	auto segment_duration = std::round(static_cast<float_t>(_storage_config.segment_duration_ms) / 1000.0);	
+	auto chunk_duration = static_cast<float_t>(packager_config.chunk_duration_ms) / 1000.0;
 	auto track_id = media_track->GetId();
 
 	auto chunklist = std::make_shared<LLHlsChunklist>(GetChunklistName(track_id),
@@ -1293,7 +1341,7 @@ bool LLHlsStream::CheckPlaylistReady()
 	for (const auto &[track_id, storage] : _storage_map)
 	{
 		// At least one segment must be created.
-		if (storage->GetLastSegmentNumber() < 0)
+		if (storage->GetSegmentCount() <= 1)
 		{
 			return false;
 		}
@@ -1316,6 +1364,8 @@ bool LLHlsStream::CheckPlaylistReady()
 	}
 
 	chunklist_lock.unlock();
+
+	logti("LLHlsStream(%s/%s) - Ready to play : Part Hold Back = %f", GetApplication()->GetVHostAppName().CStr(), GetName().CStr(), final_part_hold_back);
 
 	_playlist_ready = true;
 

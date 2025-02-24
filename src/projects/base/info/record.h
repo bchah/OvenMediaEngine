@@ -25,6 +25,9 @@ namespace info
 		void SetId(ov::String id);
 		ov::String GetId() const;
 
+		void SetByConfig(bool is_config);
+		bool IsByConfig();
+
 		// set by user
 		void SetMetadata(ov::String metadata);
 		ov::String GetMetadata() const;
@@ -152,6 +155,11 @@ namespace info
 		// User custom id
 		ov::String _id;
 
+		// by config
+		// False - This is a recording task requested via the REST API, and it will remain active until a STOP command is issued through the REST API.
+		// True - This is a recording task requested via the configuration file, and it will remain active until the configuration is changed.
+		bool _is_config;
+		
 		// It is used as additional information for recording session. It's not essential information.
 		ov::String _metadata;
 
@@ -239,5 +247,7 @@ namespace info
 
 		// File Session Id
 		session_id_t _session_id;
+
+
 	};
 }  // namespace info

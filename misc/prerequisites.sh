@@ -19,13 +19,16 @@ PCRE2_VERSION=10.39
 OPENH264_VERSION=2.4.0
 HIREDIS_VERSION=1.0.2
 NVCC_HDR_VERSION=11.1.5.2
-
+X264_VERSION=31e19f92
+WEBP_VERSION=1.5.0
 INTEL_QSV_HWACCELS=false
 NETINT_LOGAN_HWACCELS=false
 NETINT_LOGAN_PATCH_PATH=""
 NETINT_LOGAN_XCODER_COMPILE_PATH=""
 NVIDIA_NV_CODEC_HWACCELS=false
 XILINX_XMA_CODEC_HWACCELS=false
+VIDEOLAN_X264_CODEC=true
+
 
 if [[ "$OSTYPE" == "darwin"* ]]; then
     NCPU=$(sysctl -n hw.ncpu)
@@ -34,20 +37,21 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
 else
     NCPU=$(nproc)
 
-    # CentOS, Fedora
-    if [ -f /etc/redhat-release ]; then
-        OSNAME=$(cat /etc/redhat-release |awk '{print $1}')
-        OSVERSION=$(cat /etc/redhat-release |sed s/.*release\ // |sed s/\ .*// | cut -d"." -f1)
-    # Ubuntu, Amazon
-    elif [ -f /etc/os-release ]; then
+    # Ubuntu, Amazon, Rocky, AlmaLinux
+    if [ -f /etc/os-release ]; then
         OSNAME=$(cat /etc/os-release | grep "^NAME" | tr -d "\"" | cut -d"=" -f2)
         OSVERSION=$(cat /etc/os-release | grep ^VERSION= | tr -d "\"" | cut -d"=" -f2 | cut -d"." -f1 | awk '{print  $1}')
         OSMINORVERSION=$(cat /etc/os-release | grep ^VERSION= | tr -d "\"" | cut -d"=" -f2 | cut -d"." -f2 | awk '{print  $1}')
+    # Fedora, others
+    elif [ -f /etc/redhat-release ]; then
+        OSNAME=$(cat /etc/redhat-release |awk '{print $1}')
+        OSVERSION=$(cat /etc/redhat-release |sed s/.*release\ // |sed s/\ .*// | cut -d"." -f1)
     fi
 fi
 
 MAKEFLAGS="${MAKEFLAGS} -j${NCPU}"
 CURRENT=$(pwd)
+SCRIPT_PATH=$(cd "$(dirname "$0")" && pwd)
 PATH=$PATH:${PREFIX}/bin
 
 install_openssl()
@@ -98,6 +102,22 @@ install_libopus()
     sudo make install && \
     sudo rm -rf ${PREFIX}/share && \
     rm -rf ${DIR}) || fail_exit "opus"
+}
+
+install_libx264()
+{
+    if [ "$VIDEOLAN_X264_CODEC" = false ] ; then
+        return
+    fi
+
+    (DIR=${TEMP_PATH}/x264 && \
+    mkdir -p ${DIR} && \
+    cd ${DIR} && \
+    curl -sLf https://code.videolan.org/videolan/x264/-/archive/master/x264-${X264_VERSION}.tar.bz2 | tar -jx --strip-components=1 && \
+    ./configure --prefix="${PREFIX}" --enable-shared --enable-pic --disable-cli && \
+    make -j$(nproc) && \
+    sudo make install && \
+    rm -rf ${DIR}) || fail_exit "x264"
 }
 
 install_libopenh264()
@@ -153,6 +173,18 @@ install_libvpx()
     rm -rf ${DIR}) || fail_exit "vpx"
 }
 
+install_libwebp()
+{
+    (DIR=${TEMP_PATH}/webp && \
+    mkdir -p ${DIR} && \
+    cd ${DIR} && \
+    curl -sSLf https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-${WEBP_VERSION}.tar.gz | tar -xz --strip-components=1 && \
+    ./configure --prefix="${PREFIX}" --enable-shared --disable-static && \
+    make -j$(nproc) && \
+    sudo make install && \
+    rm -rf ${DIR}) || fail_exit "webp"
+}
+
 install_fdk_aac()
 {
     (DIR=${TEMP_PATH}/aac && \
@@ -187,8 +219,8 @@ install_nvcc_hdr() {
         (DIR=${TEMP_PATH}/nvcc-hdr && \
         mkdir -p ${DIR} && \
         cd ${DIR} && \
-        export DESTDIR=${PREFIX} && \
-        curl -sSLf https://github.com/FFmpeg/nv-codec-headers/releases/download/n${NVCC_HDR_VERSION}/nv-codec-headers-${NVCC_HDR_VERSION}.tar.gz | tar -xz --strip-components=1 && sed -i 's|PREFIX.*=\(.*\)|PREFIX =|g' Makefile && \
+        curl -sSLf https://github.com/FFmpeg/nv-codec-headers/releases/download/n${NVCC_HDR_VERSION}/nv-codec-headers-${NVCC_HDR_VERSION}.tar.gz | tar -xz --strip-components=1 && \
+        sed -i 's|PREFIX.*=\(.*\)|PREFIX = '${PREFIX}'|g' Makefile && \
         sudo make install ) || fail_exit "nvcc_headers"
     fi
 }
@@ -232,7 +264,7 @@ install_ffmpeg()
         ADDI_CFLAGS+="-I/usr/local/cuda/include "
         ADDI_LDFLAGS="-L/usr/local/cuda/lib64 "
         ADDI_LICENSE+=" --enable-nonfree "
-        ADDI_LIBS+=" --enable-cuda-nvcc --enable-cuda-llvm --enable-libnpp --enable-nvenc --enable-nvdec --enable-ffnvcodec --enable-cuvid "
+        ADDI_LIBS+=" --enable-cuda-nvcc --enable-cuda-llvm --enable-nvenc --enable-nvdec --enable-ffnvcodec --enable-cuvid "
         ADDI_HWACCEL="--enable-hwaccel=cuda,cuvid "
         ADDI_ENCODER+=",h264_nvenc,hevc_nvenc"
         ADDI_DECODER+=",h264_nvdec,hevc_nvdec,h264_cuvid,hevc_cuvid"
@@ -247,10 +279,16 @@ install_ffmpeg()
         ADDI_ENCODER+=",h264_vcu_mpsoc,hevc_vcu_mpsoc"
         ADDI_DECODER+=",h264_vcu_mpsoc,hevc_vcu_mpsoc"
         ADDI_FILTERS+=",multiscale_xma,xvbm_convert"
-        ADDI_LIBS+=" --enable-x86asm --enable-libxma2api --enable-libxvbm --enable-libxrm --enable-cross-compile "
+     	ADDI_LIBS+=" --enable-x86asm --enable-libxma2api --enable-libxvbm --enable-libxrm --enable-cross-compile "
         ADDI_CFLAGS+=" -I/opt/xilinx/xrt/include/xma2 "
-        ADDI_LDFLAGS+="-L/opt/xilinx/xrt/lib  -Wl,-rpath,/opt/xilinx/xrt/lib -Wl,-rpath,/opt/xilinx/xrm/lib "
-        ADDI_EXTRA_LIBS+="--extra-libs=-lxma2api --extra-libs=-lxrt_core --extra-libs=-lxrt_coreutil --extra-libs=-lpthread --extra-libs=-ldl "
+        ADDI_LDFLAGS+="-L/opt/xilinx/xrt/lib -L/opt/xilinx/xrm/lib  -Wl,-rpath,/opt/xilinx/xrt/lib,-rpath,/opt/xilinx/xrm/lib"
+        ADDI_EXTRA_LIBS+="--extra-libs=-lxma2api --extra-libs=-lxrt_core --extra-libs=-lxrm --extra-libs=-lxrt_coreutil --extra-libs=-lpthread --extra-libs=-ldl "
+    fi
+
+    if [ "$VIDEOLAN_X264_CODEC" == true ]; then
+        ADDI_LIBS+=" --enable-libx264 "
+        ADDI_ENCODER+=",libx264"
+        ADDI_LICENSE+=" --enable-gpl --enable-nonfree "
     fi
 
     # Options are added by external scripts.
@@ -282,24 +320,26 @@ install_ffmpeg()
         # Download FFmpeg for xilinx video sdk 3.0
 	    (rm -rf ${DIR}  && mkdir -p ${DIR} && \
 	    git clone --depth=1 --branch U30_GA_3 https://github.com/Xilinx/app-ffmpeg4-xma.git ${DIR}) || fail_exit "ffmpeg"	
+        # Compatible with nvcc 10.x and later
+        (cd ${DIR} && sed -i 's/compute_30/compute_50/g' configure &&  sed -i 's/sm_30/sm_50/g' configure) || fail_exit "ffmpeg"
     fi
 	
     # If there is an enable-nilogan option, add patch from libxcoder_logan-path 
     if [ "$NETINT_LOGAN_HWACCELS" = true ] ; then		
-      echo "we are applying the patch founded in $NETINT_LOGAN_PATCH_PATH"
-      patch_name=$(basename $NETINT_LOGAN_PATCH_PATH)
-      cp $NETINT_LOGAN_PATCH_PATH ${DIR}		
-      cd ${DIR} && patch -t -p 1 < $patch_name
-      if [ "$NETINT_LOGAN_XCODER_COMPILE_PATH" != "" ] ; then
-        cd $NETINT_LOGAN_XCODER_COMPILE_PATH && bash build.sh && ldconfig #the compilation of libxcoder_logan can be done before
-      fi		
-      ADDI_LIBS+=" --enable-libxcoder_logan --enable-ni_logan --enable-avfilter  --enable-pthreads "
-      ADDI_ENCODER+=",h264_ni_logan,h265_ni_logan"
-          ADDI_DECODER+=",h264_ni_logan,h265_ni_logan"
-      ADDI_LICENSE+=" --enable-gpl --enable-nonfree "
-      ADDI_LDFLAGS=" -lm -ldl"
-      ADDI_FILTERS+=",hwdownload,hwupload,hwupload_ni_logan"
-      #ADDI_EXTRA_LIBS="-lpthread"
+        echo "we are applying the patch founded in $NETINT_LOGAN_PATCH_PATH"
+        patch_name=$(basename $NETINT_LOGAN_PATCH_PATH)
+        cp $NETINT_LOGAN_PATCH_PATH ${DIR}		
+        cd ${DIR} && patch -t -p 1 < $patch_name
+        if [ "$NETINT_LOGAN_XCODER_COMPILE_PATH" != "" ] ; then
+            cd $NETINT_LOGAN_XCODER_COMPILE_PATH && bash build.sh && ldconfig #the compilation of libxcoder_logan can be done before
+        fi		
+        ADDI_LIBS+=" --enable-libxcoder_logan --enable-ni_logan --enable-avfilter  --enable-pthreads "
+        ADDI_ENCODER+=",h264_ni_logan,h265_ni_logan"
+        ADDI_DECODER+=",h264_ni_logan,h265_ni_logan"
+        ADDI_LICENSE+=" --enable-gpl --enable-nonfree "
+        ADDI_LDFLAGS=" -lm -ldl"
+        ADDI_FILTERS+=",hwdownload,hwupload,hwupload_ni_logan"
+        #ADDI_EXTRA_LIBS="-lpthread"
     fi
     
     # Patch for Enterprise
@@ -312,27 +352,35 @@ install_ffmpeg()
     (cd ${DIR} && PKG_CONFIG_PATH=${PREFIX}/lib/pkgconfig:${PREFIX}/lib64/pkgconfig:${PREFIX}/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH} ./configure \
     --prefix="${PREFIX}" \
     --extra-cflags="-I${PREFIX}/include ${ADDI_CFLAGS}"  \
-    --extra-ldflags="-L${PREFIX}/lib -Wl,-rpath,${PREFIX}/lib ${ADDI_LDFLAGS}" \
+    --extra-ldflags="${ADDI_LDFLAGS} -L${PREFIX}/lib -Wl,-rpath,${PREFIX}/lib " \
     --extra-libs=-ldl ${ADDI_EXTRA_LIBS} \
     ${ADDI_LICENSE} \
     --disable-everything --disable-programs --disable-avdevice --disable-dwt --disable-lsp --disable-lzo --disable-faan --disable-pixelutils \
-    --enable-shared --enable-zlib --enable-libopus --enable-libvpx --enable-libfdk_aac --enable-libopenh264 --enable-openssl --enable-network --enable-libsrt --enable-dct --enable-rdft  ${ADDI_LIBS} \
+    --enable-shared --enable-zlib --enable-libopus --enable-libvpx --enable-libfdk_aac --enable-libopenh264 --enable-openssl --enable-network --enable-libsrt --enable-dct --enable-rdft --enable-libwebp ${ADDI_LIBS} \
     ${ADDI_HWACCEL} \
     --enable-ffmpeg \
-    --enable-encoder=libvpx_vp8,libopus,libfdk_aac,libopenh264,mjpeg,png${ADDI_ENCODER} \
+    --enable-encoder=libvpx_vp8,libopus,libfdk_aac,libopenh264,mjpeg,png,libwebp${ADDI_ENCODER} \
     --enable-decoder=aac,aac_latm,aac_fixed,mp3float,mp3,h264,hevc,opus,vp8${ADDI_DECODER} \
     --enable-parser=aac,aac_latm,aac_fixed,h264,hevc,opus,vp8 \
     --enable-protocol=tcp,udp,rtp,file,rtmp,tls,rtmps,libsrt \
     --enable-demuxer=rtsp,flv,live_flv,mp4,mp3 \
     --enable-muxer=mp4,webm,mpegts,flv,mpjpeg \
-    --enable-filter=asetnsamples,aresample,aformat,channelmap,channelsplit,scale,transpose,fps,settb,asettb,format${ADDI_FILTERS} && \
+    --enable-filter=asetnsamples,aresample,aformat,channelmap,channelsplit,scale,transpose,fps,settb,asettb,crop,format${ADDI_FILTERS} && \
     make -j$(nproc) && \
     sudo make install && \
     sudo rm -rf ${PREFIX}/share && \
     rm -rf ${DIR}) || fail_exit "ffmpeg"
 }
 
-
+install_stubs() 
+{
+    (DIR=${TEMP_PATH}/stubs && \
+    mkdir -p ${DIR} && \
+    cd ${DIR} && \
+    cp ${SCRIPT_PATH}/stubs/* . && \
+    sudo make install PREFIX=${PREFIX} && \
+    rm -rf ${DIR}) || fail_exit "stubs"    
+}
 
 install_jemalloc()
 {
@@ -382,17 +430,15 @@ install_base_fedora()
     sudo yum install -y perl-IPC-Cmd
 }
 
-install_base_centos()
+install_base_rhel()
 {
-    if [[ "${OSNAME}" == "CentOS" && "${OSVERSION}" == "7" ]]; then
-        sudo yum install -y epel-release
+    sudo dnf install -y bc gcc-c++ autoconf libtool tcl bzip2 zlib-devel cmake libuuid-devel
+    sudo dnf install -y perl-IPC-Cmd perl-FindBin
+}
 
-        # centos-release-scl should be installed before installing devtoolset-7
-        sudo yum install -y centos-release-scl
-        sudo yum install -y glibc-static devtoolset-7
-
-        source scl_source enable devtoolset-7
-    elif [[ "${OSNAME}" == "Amazon Linux" && "${OSVERSION}" == "2" ]]; then
+install_base_amazon()
+{
+    if [[ "${OSVERSION}" == "2" ]]; then
         sudo yum install -y make git which
     fi
 
@@ -435,11 +481,15 @@ fail_exit()
 
 check_version()
 {
-    if [[ "${OSNAME}" == "Ubuntu" && "${OSVERSION}" != "18" && "${OSVERSION}.${OSMINORVERSION}" != "20.04" ]]; then
+    if [[ "${OSNAME}" == "Ubuntu" && "${OSVERSION}" != "18" && "${OSVERSION}.${OSMINORVERSION}" != "20.04" && "${OSVERSION}.${OSMINORVERSION}" != "22.04" ]]; then
         proceed_yn
     fi
 
-    if [[ "${OSNAME}" == "CentOS" && "${OSVERSION}" != "7" && "${OSVERSION}" != "8" ]]; then
+    if [[ "${OSNAME}" == "Rocky Linux" && "${OSVERSION}" != "9" ]]; then
+        proceed_yn
+    fi
+
+    if [[ "${OSNAME}" == "AlmaLinux" && "${OSVERSION}" != "9" ]]; then
         proceed_yn
     fi
 
@@ -458,7 +508,7 @@ check_version()
 
 proceed_yn()
 {
-    read -p "This program [$0] is tested on [Ubuntu 18/20.04, CentOS 7/8 q, Fedora 28, Amazon Linux 2]
+    read -p "This program [$0] is tested on [Ubuntu 18/20.04/22.04, Rocky Linux 9, AlmaLinux OS 9, Fedora 28, Amazon Linux 2]
 Do you want to continue [y/N] ? " ANS
     if [[ "${ANS}" != "y" && "$ANS" != "yes" ]]; then
         cd ${CURRENT}
@@ -501,7 +551,15 @@ case $i in
     --enable-xma)
     XILINX_XMA_CODEC_HWACCELS=true
     shift
-    ;;    
+    ;;
+    --disable-x264)
+    VIDEOLAN_X264_CODEC=false
+    shift
+    ;;
+    --enable-x264)
+    VIDEOLAN_X264_CODEC=true
+    shift
+    ;;
     *)
             # unknown option
     ;;
@@ -520,23 +578,27 @@ fi
 if [ "${OSNAME}" == "Ubuntu" ]; then
     check_version
     install_base_ubuntu
-elif  [ "${OSNAME}" == "CentOS" ]; then
-     check_version
-     install_base_centos
-elif  [ "${OSNAME}" == "Amazon Linux" ]; then
-     check_version
-     install_base_centos
-elif  [ "${OSNAME}" == "Fedora" ]; then
+elif [ "${OSNAME}" == "Rocky Linux" ]; then
+    check_version
+    install_base_rhel
+elif [ "${OSNAME}" == "AlmaLinux" ]; then
+    check_version
+    install_base_rhel
+elif [ "${OSNAME}" == "Amazon Linux" ]; then
+    check_version
+    install_base_amazon
+elif [ "${OSNAME}" == "Fedora" ]; then
     check_version
     install_base_fedora
-elif  [ "${OSNAME}" == "Red" ]; then
+elif [ "${OSNAME}" == "Red" ]; then
     check_version
     install_base_fedora
-elif  [ "${OSNAME}" == "Mac OS X" ]; then
+elif [ "${OSNAME}" == "Mac OS X" ]; then
     install_base_macos
 else
     echo "This program [$0] does not support your operating system [${OSNAME}]"
     echo "Please refer to manual installation page"
+    exit 1
 fi
 
 install_nasm
@@ -545,10 +607,13 @@ install_libsrtp
 install_libsrt
 install_libopus
 install_libopenh264
+install_libx264
 install_libvpx
+install_libwebp
 install_fdk_aac
 install_nvcc_hdr
 install_ffmpeg
+install_stubs
 install_jemalloc
 install_libpcre2
 install_hiredis

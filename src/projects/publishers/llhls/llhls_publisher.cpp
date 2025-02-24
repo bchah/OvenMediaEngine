@@ -203,7 +203,7 @@ bool LLHlsPublisher::OnDeletePublisherApplication(const std::shared_ptr<pub::App
 	auto llhls_application = std::static_pointer_cast<LLHlsApplication>(application);
 	if (llhls_application == nullptr)
 	{
-		logte("Could not found llhls application. app:%s", llhls_application->GetName().CStr());
+		logte("Could not found llhls application. app:%s", llhls_application->GetVHostAppName().CStr());
 		return false;
 	}
 
@@ -247,7 +247,7 @@ std::shared_ptr<LLHlsHttpInterceptor> LLHlsPublisher::CreateInterceptor()
 		auto application = std::static_pointer_cast<LLHlsApplication>(GetApplicationByName(vhost_app_name));
 		if (application != nullptr)
 		{
-			application->GetCorsManager().SetupHttpCorsHeader(vhost_app_name, request, response, {http::Method::Options, http::Method::Get});
+			application->GetCorsManager().SetupHttpCorsHeader(vhost_app_name, request, response, {http::Method::Options, http::Method::Get, http::Method::Head});
 		}
 		else
 		{
@@ -300,7 +300,9 @@ std::shared_ptr<LLHlsHttpInterceptor> LLHlsPublisher::CreateInterceptor()
 		// Check if the request is for the master playlist
 		if (access_control_enabled == true && (final_url->File().IndexOf(".m3u8") > 0 && final_url->File().IndexOf("chunklist") == -1))
 		{
-			auto [signed_policy_result, signed_policy] = Publisher::VerifyBySignedPolicy(final_url, remote_address);
+			auto request_info = std::make_shared<ac::RequestInfo>(final_url, nullptr, request->GetRemote(), request);
+
+			auto [signed_policy_result, signed_policy] = Publisher::VerifyBySignedPolicy(request_info);
 			if (signed_policy_result == AccessController::VerificationResult::Pass)
 			{
 				session_life_time = signed_policy->GetStreamExpireEpochMSec();
@@ -319,8 +321,6 @@ std::shared_ptr<LLHlsHttpInterceptor> LLHlsPublisher::CreateInterceptor()
 			}
 
 			// Admission Webhooks
-			auto request_info = std::make_shared<AccessController::RequestInfo>(final_url, remote_address, request->GetHeader("USER-AGENT"));
-
 			auto [webhooks_result, admission_webhooks] = VerifyByAdmissionWebhooks(request_info);
 			if (webhooks_result == AccessController::VerificationResult::Off)
 			{
@@ -417,7 +417,7 @@ std::shared_ptr<LLHlsHttpInterceptor> LLHlsPublisher::CreateInterceptor()
 			try
 			{
 				// If this connection has been used by another session in the past, it is reused.
-				session = std::any_cast<std::shared_ptr<LLHlsSession>>(connection->GetUserData(stream->GetUri()));
+				session = std::any_cast<std::shared_ptr<LLHlsSession>>(connection->GetUserData(stream->GetStreamId()));
 			}
 			catch (const std::bad_any_cast &e)
 			{
@@ -501,11 +501,11 @@ std::shared_ptr<LLHlsHttpInterceptor> LLHlsPublisher::CreateInterceptor()
 		}
 
 		// It will be used in CloseHandler
-		connection->AddUserData(stream->GetUri(), session);
+		connection->AddUserData(stream->GetStreamId(), session);
 		session->UpdateLastRequest(connection->GetId());
 
 		// Cors Setting
-		application->GetCorsManager().SetupHttpCorsHeader(vhost_app_name, request, response);
+		application->GetCorsManager().SetupHttpCorsHeader(vhost_app_name, request, response, {http::Method::Options, http::Method::Get, http::Method::Head});
 		stream->SendMessage(session, std::make_any<std::shared_ptr<http::svr::HttpExchange>>(exchange));
 
 		return http::svr::NextHandler::DoNotCallAndDoNotResponse;
@@ -536,21 +536,15 @@ std::shared_ptr<LLHlsHttpInterceptor> LLHlsPublisher::CreateInterceptor()
 					auto stream = session->GetStream();
 					if (stream != nullptr)
 					{
-						auto remote_address = connection->GetSocket()->GetRemoteAddress();
 						auto requested_url = session->GetRequestedUrl();
 						auto final_url = session->GetFinalUrl();
-						if (remote_address && requested_url && final_url)
-						{
-							auto request_info = std::make_shared<AccessController::RequestInfo>(requested_url, remote_address, requested_url->ToUrlString(true) == final_url->ToUrlString(true) ? nullptr : final_url, session->GetUserAgent());
-
-							SendCloseAdmissionWebhooks(request_info);
-						}
+						auto request_info = std::make_shared<ac::RequestInfo>(requested_url, final_url, connection->GetSocket(), nullptr);
+						request_info->SetUserAgent(session->GetUserAgent());
+						SendCloseAdmissionWebhooks(request_info);
 
 						stream->RemoveSession(session->GetId());
 					}
 				}
-
-				session->Stop();
 			}
 		}
 	});

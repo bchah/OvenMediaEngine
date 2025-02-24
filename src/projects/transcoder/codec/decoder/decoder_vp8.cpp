@@ -11,13 +11,8 @@
 #include "../../transcoder_private.h"
 #include "base/info/application.h"
 
-bool DecoderVP8::Configure(std::shared_ptr<MediaTrack> context)
+bool DecoderVP8::InitCodec()
 {
-	if (TranscodeDecoder::Configure(context) == false)
-	{
-		return false;
-	}
-
 	const AVCodec *_codec = ::avcodec_find_decoder(GetCodecID());
 	if (_codec == nullptr)
 	{
@@ -33,36 +28,55 @@ bool DecoderVP8::Configure(std::shared_ptr<MediaTrack> context)
 	}
 
 	_context->time_base = ffmpeg::Conv::TimebaseToAVRational(GetTimebase());
-
+	_context->thread_count = GetRefTrack()->GetThreadCount();
+	_context->thread_type = FF_THREAD_FRAME;
+	
 	if (::avcodec_open2(_context, _codec, nullptr) < 0)
 	{
 		logte("Could not open codec: %s (%d)", ::avcodec_get_name(GetCodecID()), GetCodecID());
 		return false;
 	}
 
-	// Create packet parser
-	_parser = ::av_parser_init(_codec->id);
+	_parser = ::av_parser_init(GetCodecID());
 	if (_parser == nullptr)
 	{
 		logte("Parser not found");
 		return false;
 	}
-
 	_parser->flags |= PARSER_FLAG_COMPLETE_FRAMES;
 
-	// Generates a thread that reads and encodes frames in the input_buffer queue and places them in the output queue.
-	try
-	{
-		_kill_flag = false;
+	_change_format = false;
 
-		_codec_thread = std::thread(&TranscodeDecoder::CodecThread, this);
-		pthread_setname_np(_codec_thread.native_handle(), ov::String::FormatString("Dec%s", avcodec_get_name(GetCodecID())).CStr());
-	}
-	catch (const std::system_error &e)
+	return true;
+}
+
+void DecoderVP8::UninitCodec()
+{
+	if (_context != nullptr)
 	{
-		logte("Failed to start decoder thread");
-		_kill_flag = true;
-		return false;
+		::avcodec_free_context(&_context);
+	}
+	_context = nullptr;
+
+	if (_parser != nullptr)
+	{
+		::av_parser_close(_parser);
+	}
+	_parser = nullptr;
+}
+
+bool DecoderVP8::ReinitCodecIfNeed()
+{
+	if (_context->width != 0 && _context->height != 0 && (_parser->width != _context->width || _parser->height != _context->height))
+	{
+		logti("Changed input resolution of %u track. (%dx%d -> %dx%d)", GetRefTrack()->GetId(), _context->width, _context->height, _parser->width, _parser->height);
+
+		UninitCodec();
+
+		if (InitCodec() == false)
+		{
+			return false;
+		}
 	}
 
 	return true;
@@ -70,6 +84,12 @@ bool DecoderVP8::Configure(std::shared_ptr<MediaTrack> context)
 
 void DecoderVP8::CodecThread()
 {
+	// Initialize the codec and notify the main thread.
+	if(_codec_init_event.Submit(InitCodec()) == false)
+	{
+		return;
+	}
+	
 	while (!_kill_flag)
 	{
 		auto obj = _input_buffer.Dequeue();
@@ -106,6 +126,11 @@ void DecoderVP8::CodecThread()
 				break;
 			}
 
+			if (ReinitCodecIfNeed() == false)
+			{
+				break;
+			}
+
 			if (_pkt->size > 0)
 			{
 				_pkt->pts = _parser->pts;
@@ -119,8 +144,18 @@ void DecoderVP8::CodecThread()
 					_pkt->duration = duration;
 				}
 
-				int ret = ::avcodec_send_packet(_context, _pkt);
+				// Keyframe Decode Only
+				// If set to decode only key frames, non-keyframe packets are dropped.
+				if(GetRefTrack()->IsKeyframeDecodeOnly() == true)
+				{
+					// Drop non-keyframe packets
+					if (!(_pkt->flags & AV_PKT_FLAG_KEY))
+					{
+						break;
+					}
+				}
 
+				int ret = ::avcodec_send_packet(_context, _pkt);
 				if (ret == AVERROR(EAGAIN))
 				{
 					// Need more data
@@ -193,7 +228,7 @@ void DecoderVP8::CodecThread()
 					{
 						auto codec_info = ffmpeg::Conv::CodecInfoToString(_context, _codec_par);
 						logti("[%s/%s(%u)] input track information: %s",
-							  _stream_info.GetApplicationInfo().GetName().CStr(),
+							  _stream_info.GetApplicationInfo().GetVHostAppName().CStr(),
 							  _stream_info.GetName().CStr(),
 							  _stream_info.GetId(),
 							  codec_info.CStr());
@@ -219,7 +254,7 @@ void DecoderVP8::CodecThread()
 					continue;
 				}
 
-				SendOutputBuffer(need_to_change_notify ? TranscodeResult::FormatChanged : TranscodeResult::DataReady, std::move(decoded_frame));
+				Complete(need_to_change_notify ? TranscodeResult::FormatChanged : TranscodeResult::DataReady, std::move(decoded_frame));
 			}
 		}
 	}

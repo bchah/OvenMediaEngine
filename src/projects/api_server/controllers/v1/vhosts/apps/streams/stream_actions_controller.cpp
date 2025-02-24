@@ -10,8 +10,10 @@
 #include "../../../../../api_private.h"
 
 #include <base/provider/application.h>
-#include <modules/id3v2/id3v2.h>
-#include <modules/id3v2/frames/id3v2_frames.h>
+#include <modules/data_format/id3v2/id3v2.h>
+#include <modules/data_format/id3v2/frames/id3v2_frames.h>
+#include <modules/data_format/cue_event/cue_event.h>
+#include <modules/data_format/amf_event/amf_event.h>
 
 namespace api
 {
@@ -25,6 +27,9 @@ namespace api
 			RegisterPost(R"((startHlsDump))", &StreamActionsController::OnPostStartHLSDump);
 			RegisterPost(R"((stopHlsDump))", &StreamActionsController::OnPostStopHLSDump);
 			RegisterPost(R"((sendEvent))", &StreamActionsController::OnPostSendEvent);
+			RegisterPost(R"((sendEvents))", &StreamActionsController::OnPostSendEvents);
+
+			RegisterPost(R"((concludeHlsLive))", &StreamActionsController::OnPostConcludeHlsLive);
 		}
 
 		// POST /v1/vhosts/<vhost_name>/apps/<app_name>/streams/<stream_name>:hlsDumps
@@ -43,7 +48,7 @@ namespace api
 			{
 				throw http::HttpError(http::StatusCode::BadRequest,
 									  "Could not parse json context: [%s/%s/%s]",
-									  vhost->GetName().CStr(), app->GetName().GetAppName().CStr(), stream->GetName().CStr());
+									  vhost->GetName().CStr(), app->GetVHostAppName().GetAppName().CStr(), stream->GetName().CStr());
 			}
 
 			if (dump_info->GetStreamName().IsEmpty() == true)
@@ -60,16 +65,16 @@ namespace api
 			{
 				throw http::HttpError(http::StatusCode::NotFound,
 									  "Could not find output stream: [%s/%s/%s]",
-									  vhost->GetName().CStr(), app->GetName().GetAppName().CStr(), dump_info->GetStreamName().CStr());
+									  vhost->GetName().CStr(), app->GetVHostAppName().GetAppName().CStr(), dump_info->GetStreamName().CStr());
 			}
 
 			auto output_stream = *output_stream_it;
-			auto llhls_stream = GetLLHlsStream(output_stream);
+			auto llhls_stream = GetOutputStream<LLHlsStream>(output_stream, PublisherType::LLHls);
 			if (llhls_stream == nullptr)
 			{
 				throw http::HttpError(http::StatusCode::NotFound,
 									  "Could not find LLHLS stream: [%s/%s/%s]",
-									  vhost->GetName().CStr(), app->GetName().GetAppName().CStr(), dump_info->GetStreamName().CStr());
+									  vhost->GetName().CStr(), app->GetVHostAppName().GetAppName().CStr(), dump_info->GetStreamName().CStr());
 			}
 
 			Json::Value response = Json::Value(Json::arrayValue);
@@ -118,7 +123,7 @@ namespace api
 			{
 				throw http::HttpError(http::StatusCode::BadRequest,
 									  "Could not parse json context: [%s/%s/%s]",
-									  vhost->GetName().CStr(), app->GetName().GetAppName().CStr(), stream->GetName().CStr());
+									  vhost->GetName().CStr(), app->GetVHostAppName().GetAppName().CStr(), stream->GetName().CStr());
 			}
 
 			if (dump_info->GetId().IsEmpty() == true || 
@@ -137,16 +142,16 @@ namespace api
 			{
 				throw http::HttpError(http::StatusCode::NotFound,
 									  "Could not find output stream: [%s/%s/%s]",
-									  vhost->GetName().CStr(), app->GetName().GetAppName().CStr(), dump_info->GetStreamName().CStr());
+									  vhost->GetName().CStr(), app->GetVHostAppName().GetAppName().CStr(), dump_info->GetStreamName().CStr());
 			}
 
 			auto output_stream = *output_stream_it;
-			auto llhls_stream = GetLLHlsStream(output_stream);
+			auto llhls_stream = GetOutputStream<LLHlsStream>(output_stream, PublisherType::LLHls);
 			if (llhls_stream == nullptr)
 			{
 				throw http::HttpError(http::StatusCode::NotFound,
 									  "Could not find LLHLS stream: [%s/%s/%s]",
-									  vhost->GetName().CStr(), app->GetName().GetAppName().CStr(), dump_info->GetStreamName().CStr());
+									  vhost->GetName().CStr(), app->GetVHostAppName().GetAppName().CStr(), dump_info->GetStreamName().CStr());
 			}
 
 			auto [result, reason] = llhls_stream->StartDump(dump_info);
@@ -154,7 +159,7 @@ namespace api
 			{
 				throw http::HttpError(http::StatusCode::InternalServerError,
 									  "Could not start dump: [%s/%s/%s] (%s)",
-									  vhost->GetName().CStr(), app->GetName().GetAppName().CStr(), dump_info->GetStreamName().CStr(), reason.CStr());
+									  vhost->GetName().CStr(), app->GetVHostAppName().GetAppName().CStr(), dump_info->GetStreamName().CStr(), reason.CStr());
 			}
 
 			return {http::StatusCode::OK};
@@ -176,7 +181,7 @@ namespace api
 			{
 				throw http::HttpError(http::StatusCode::BadRequest,
 									  "Could not parse json context: [%s/%s/%s]",
-									  vhost->GetName().CStr(), app->GetName().GetAppName().CStr(), stream->GetName().CStr());
+									  vhost->GetName().CStr(), app->GetVHostAppName().GetAppName().CStr(), stream->GetName().CStr());
 			}
 
 			if (dump_info->GetStreamName().IsEmpty() == true)
@@ -193,16 +198,16 @@ namespace api
 			{
 				throw http::HttpError(http::StatusCode::NotFound,
 									  "Could not find output stream: [%s/%s/%s]",
-									  vhost->GetName().CStr(), app->GetName().GetAppName().CStr(), dump_info->GetStreamName().CStr());
+									  vhost->GetName().CStr(), app->GetVHostAppName().GetAppName().CStr(), dump_info->GetStreamName().CStr());
 			}
 
 			auto output_stream = *output_stream_it;
-			auto llhls_stream = GetLLHlsStream(output_stream);
+			auto llhls_stream = GetOutputStream<LLHlsStream>(output_stream, PublisherType::LLHls);
 			if (llhls_stream == nullptr)
 			{
 				throw http::HttpError(http::StatusCode::NotFound,
 									  "Could not find LLHLS stream: [%s/%s/%s]",
-									  vhost->GetName().CStr(), app->GetName().GetAppName().CStr(), dump_info->GetStreamName().CStr());
+									  vhost->GetName().CStr(), app->GetVHostAppName().GetAppName().CStr(), dump_info->GetStreamName().CStr());
 			}
 
 			auto [result, reason] = llhls_stream->StopDump(dump_info);
@@ -210,10 +215,46 @@ namespace api
 			{
 				throw http::HttpError(http::StatusCode::InternalServerError,
 									  "Could not stop dump: [%s/%s/%s] (%s)",
-									  vhost->GetName().CStr(), app->GetName().GetAppName().CStr(), dump_info->GetStreamName().CStr(), reason.CStr());
+									  vhost->GetName().CStr(), app->GetVHostAppName().GetAppName().CStr(), dump_info->GetStreamName().CStr(), reason.CStr());
 			}
 
 			return {http::StatusCode::OK};
+		}
+
+		// POST /v1/vhosts/<vhost_name>/apps/<app_name>/streams/<stream_name>:injectHLSEvent
+		ApiResponse StreamActionsController::OnPostSendEvents(const std::shared_ptr<http::svr::HttpExchange> &client, const Json::Value &request_body,
+										const std::shared_ptr<mon::HostMetrics> &vhost,
+										const std::shared_ptr<mon::ApplicationMetrics> &app,
+										const std::shared_ptr<mon::StreamMetrics> &stream,
+										const std::vector<std::shared_ptr<mon::StreamMetrics>> &output_streams)
+		{
+			if (request_body.isArray() == false || request_body.size() == 0)
+			{
+				throw http::HttpError(http::StatusCode::BadRequest, "events(array) is required");
+			}
+
+			MultipleStatus status_codes;
+			Json::Value response_value(Json::ValueType::arrayValue);
+			for (const auto &request_event : request_body)
+			{
+				try
+				{
+					OnPostSendEvent(client, request_event, vhost, app, stream, output_streams);
+					status_codes.AddStatusCode(http::StatusCode::OK);
+
+					Json::Value response;
+					response["statusCode"] = static_cast<int>(http::StatusCode::OK);
+					response["message"] = StringFromStatusCode(http::StatusCode::OK);
+					response_value.append(response);
+				}
+				catch (const http::HttpError &error)
+				{
+					status_codes.AddStatusCode(error.GetStatusCode());
+					response_value.append(::serdes::JsonFromError(error));
+				}
+			}
+
+			return {status_codes, std::move(response_value)};
 		}
 
 		// POST /v1/vhosts/<vhost_name>/apps/<app_name>/streams/<stream_name>:injectHLSEvent
@@ -224,9 +265,12 @@ namespace api
 										const std::vector<std::shared_ptr<mon::StreamMetrics>> &output_streams)
 		{
 			// Validate request body
+
+			// ID3 Event
 			// {
 			//   "eventFormat": "id3v2",
 			//   "eventType": "video",
+			//	 "urgent": false,
 			//   "events":[
 			//       {
 			//         "frameType": "TXXX",
@@ -237,31 +281,218 @@ namespace api
 			//         "frameType": "TXXX",
 			//         "info": "AirenSoft",
 			//         "data": "OvenMediaEngine"
+			//       },
+			//		 {
+			//         "frameType": "PRIV",
+			//         "info": "AirenSoft",
+			//         "data": "OvenMediaEngine"
 			//       }
 			//   ]
 			// }
 
+			// Cue Event
+			// {
+			// 	"eventFormat": "cue",
+			// 	"events":[
+			// 		{
+			// 			"cueType": "out", // out | in
+			// 			"duration": 60500 // milliseconds, only available when cueType is out
+			// 		}
+			// 	]
+			// }
+
 			if (request_body.isMember("eventFormat") == false || request_body["eventFormat"].isString() == false ||
-				request_body.isMember("events") == false || request_body["events"].isArray() == false)
+				request_body.isMember("events") == false || request_body["events"].isArray() == false || request_body["events"].size() == 0)
 			{
 				throw http::HttpError(http::StatusCode::BadRequest, "eventFormat(string) and events(array) are required");
 			}
 
-			// Now only support ID3v2 format
+			cmn::BitstreamFormat event_format = cmn::BitstreamFormat::Unknown;
 			ov::String event_format_string = request_body["eventFormat"].asString().c_str();
-			if (event_format_string.UpperCaseString() != "ID3V2")
+			std::shared_ptr<ov::Data> events_data = nullptr;
+
+			if (event_format_string.UpperCaseString() == "ID3V2")
+			{
+				event_format = cmn::BitstreamFormat::ID3v2;
+				events_data = MakeID3Data(request_body["events"]);
+			}
+			else if (event_format_string.UpperCaseString() == "CUE")
+			{
+				event_format = cmn::BitstreamFormat::CUE;
+				events_data = MakeCueData(request_body["events"]);
+			}
+			else
 			{
 				throw http::HttpError(http::StatusCode::BadRequest, "eventFormat is not supported: [%s]", event_format_string.CStr());
 			}
 
-			cmn::BitstreamFormat event_format = cmn::BitstreamFormat::ID3v2;
-
-			auto events = request_body["events"];
-			if (events.size() == 0)
+			if (events_data == nullptr)
 			{
-				throw http::HttpError(http::StatusCode::BadRequest, "events is empty");
+				throw http::HttpError(http::StatusCode::BadRequest, "Could not make events data");
 			}
 
+			// Event Type (Optional)
+			cmn::PacketType event_type = cmn::PacketType::EVENT;
+			if (request_body.isMember("eventType") == true)
+			{
+				auto event_type_json = request_body["eventType"];
+				if (event_type_json.isString() == false)
+				{
+					throw http::HttpError(http::StatusCode::BadRequest, "eventType must be string");
+				}
+
+				ov::String event_type_string = event_type_json.asString().c_str();
+				if (event_type_string.UpperCaseString() == "VIDEO")
+				{
+					event_type = cmn::PacketType::VIDEO_EVENT;
+				}
+				else if (event_type_string.UpperCaseString() == "AUDIO")
+				{
+					event_type = cmn::PacketType::AUDIO_EVENT;
+				}
+				else if (event_type_string.UpperCaseString() == "EVENT")
+				{
+					event_type = cmn::PacketType::EVENT;
+				}
+				else
+				{
+					throw http::HttpError(http::StatusCode::BadRequest, "eventType is not supported: [%s]", event_type_string.CStr());
+				}
+			}
+
+			// Urgent (Optional)
+			bool urgent = false;
+			if (request_body.isMember("urgent") == true && request_body["urgent"].isBool() == true)
+			{
+				urgent = request_body["urgent"].asBool();
+			}
+
+			auto source_stream = GetSourceStream(stream);
+			if (source_stream == nullptr)
+			{
+				throw http::HttpError(http::StatusCode::NotFound,
+									"Could not find stream: [%s/%s/%s]",
+									vhost->GetName().CStr(), app->GetVHostAppName().GetAppName().CStr(), stream->GetName().CStr());
+			}
+
+			if (source_stream->SendDataFrame(-1, event_format, event_type, events_data, urgent) == false)
+			{
+				throw http::HttpError(http::StatusCode::InternalServerError,
+									"Internal Server Error - Could not inject event: [%s/%s/%s]",
+									vhost->GetName().CStr(), app->GetVHostAppName().GetAppName().CStr(), stream->GetName().CStr());
+			}
+
+			return {http::StatusCode::OK};
+		}
+
+		ApiResponse StreamActionsController::OnPostConcludeHlsLive(const std::shared_ptr<http::svr::HttpExchange> &client, const Json::Value &request_body,
+											   const std::shared_ptr<mon::HostMetrics> &vhost,
+											   const std::shared_ptr<mon::ApplicationMetrics> &app,
+											   const std::shared_ptr<mon::StreamMetrics> &stream,
+											   const std::vector<std::shared_ptr<mon::StreamMetrics>> &output_streams)
+		{
+			/*
+			{
+				"urgent": true,
+			}
+			*/
+
+			auto source_stream = GetSourceStream(stream);
+			if (source_stream == nullptr)
+			{
+				throw http::HttpError(http::StatusCode::NotFound,
+									"Could not find stream: [%s/%s/%s]",
+									vhost->GetName().CStr(), app->GetVHostAppName().GetAppName().CStr(), stream->GetName().CStr());
+			}
+
+			bool urgent = false;
+			if (request_body.isMember("urgent") == true && request_body["urgent"].isBool() == true)
+			{
+				urgent = request_body["urgent"].asBool();
+			}
+
+			auto media_event = std::make_shared<MediaEvent>(MediaEvent::CommandType::ConcludeLive, nullptr);
+			media_event->SetHighPriority(urgent);
+
+			if (source_stream->SendEvent(media_event) == false)
+			{
+				throw http::HttpError(http::StatusCode::InternalServerError,
+									"Internal Server Error - Could not inject ConcludeLive event: [%s/%s/%s]",
+									vhost->GetName().CStr(), app->GetVHostAppName().GetAppName().CStr(), stream->GetName().CStr());
+			}
+			
+			return {http::StatusCode::OK};
+		}
+
+		ApiResponse StreamActionsController::OnGetDummyAction(const std::shared_ptr<http::svr::HttpExchange> &client,
+														   const std::shared_ptr<mon::HostMetrics> &vhost,
+														   const std::shared_ptr<mon::ApplicationMetrics> &app,
+														   const std::shared_ptr<mon::StreamMetrics> &stream,
+														   const std::vector<std::shared_ptr<mon::StreamMetrics>> &output_streams)
+		{
+			logte("Called OnGetDummyAction. invoke [%s/%s/%s]", vhost->GetName().CStr(), app->GetVHostAppName().GetAppName().CStr(), stream->GetName().CStr());
+
+			return app->GetConfig().ToJson();
+		}
+
+		std::shared_ptr<pvd::Stream> StreamActionsController::GetSourceStream(const std::shared_ptr<mon::StreamMetrics> &stream)
+		{
+			// Get PrivderType from SourceType
+			ProviderType provider_type = ProviderType::Unknown;
+			switch (stream->GetSourceType())
+			{
+				case StreamSourceType::WebRTC:
+					provider_type = ProviderType::WebRTC;
+					break;
+				case StreamSourceType::Ovt:
+					provider_type = ProviderType::Ovt;
+					break;
+				case StreamSourceType::Rtmp:
+					provider_type = ProviderType::Rtmp;
+					break;
+				case StreamSourceType::Rtsp:
+					provider_type = ProviderType::Rtsp;
+					break;
+				case StreamSourceType::RtspPull:
+					provider_type = ProviderType::RtspPull;
+					break;
+				case StreamSourceType::Mpegts:
+					provider_type = ProviderType::Mpegts;
+					break;
+				case StreamSourceType::Srt:
+					provider_type = ProviderType::Srt;
+					break;
+				case StreamSourceType::Scheduled:
+					provider_type = ProviderType::Scheduled;
+					break;
+				case StreamSourceType::Multiplex:
+					provider_type = ProviderType::Multiplex;
+					break;
+				case StreamSourceType::File:
+					provider_type = ProviderType::File;
+					break;
+				case StreamSourceType::RtmpPull:
+				case StreamSourceType::Transcoder:
+					return nullptr;
+			}
+
+			auto provider = std::dynamic_pointer_cast<pvd::Provider>(ocst::Orchestrator::GetInstance()->GetProviderFromType(provider_type));
+			if (provider == nullptr)
+			{
+				return nullptr;
+			}
+
+			auto application = provider->GetApplicationByName(stream->GetApplicationInfo().GetVHostAppName());
+			if (application == nullptr)
+			{
+				return nullptr;
+			}
+
+			return application->GetStreamByName(stream->GetName());
+		}
+
+		std::shared_ptr<ov::Data> StreamActionsController::MakeID3Data(const Json::Value &events)
+		{
 			// Make ID3v2 tags
 			auto id3v2_event = std::make_shared<ID3v2>();
 			id3v2_event->SetVersion(4, 0);
@@ -295,6 +526,10 @@ namespace api
 				{
 					frame = std::make_shared<ID3v2TextFrame>(frame_type, data);
 				}
+				else if (frame_type.UpperCaseString() == "PRIV")
+				{
+					frame = std::make_shared<ID3v2PrivFrame>(info, data);
+				}
 				else
 				{
 					throw http::HttpError(http::StatusCode::BadRequest, "frameType is not supported: [%s]", frame_type.CStr());
@@ -303,137 +538,90 @@ namespace api
 				id3v2_event->AddFrame(frame);
 			}
 
-			// Event Type
-			cmn::PacketType event_type = cmn::PacketType::EVENT;
-			if (request_body.isMember("eventType") == true)
-			{
-				auto event_type_json = request_body["eventType"];
-				if (event_type_json.isString() == false)
-				{
-					throw http::HttpError(http::StatusCode::BadRequest, "eventType must be string");
-				}
-
-				ov::String event_type_string = event_type_json.asString().c_str();
-				if (event_type_string.UpperCaseString() == "VIDEO")
-				{
-					event_type = cmn::PacketType::VIDEO_EVENT;
-				}
-				else if (event_type_string.UpperCaseString() == "AUDIO")
-				{
-					event_type = cmn::PacketType::AUDIO_EVENT;
-				}
-				else if (event_type_string.UpperCaseString() == "EVENT")
-				{
-					event_type = cmn::PacketType::EVENT;
-				}
-				else
-				{
-					throw http::HttpError(http::StatusCode::BadRequest, "eventType is not supported: [%s]", event_type_string.CStr());
-				}
-			}
-			
-			auto source_stream = GetSourceStream(stream);
-			if (source_stream == nullptr)
-			{
-				throw http::HttpError(http::StatusCode::NotFound,
-									"Could not find stream: [%s/%s/%s]",
-									vhost->GetName().CStr(), app->GetName().GetAppName().CStr(), stream->GetName().CStr());
-			}
-
-			if (source_stream->SendDataFrame(-1, event_format, event_type, id3v2_event->Serialize()) == false)
-			{
-				throw http::HttpError(http::StatusCode::InternalServerError,
-									"Internal Server Error - Could not inject event: [%s/%s/%s]",
-									vhost->GetName().CStr(), app->GetName().GetAppName().CStr(), stream->GetName().CStr());
-			}
-
-			return {http::StatusCode::OK};
+			return id3v2_event->Serialize();
 		}
 
-		ApiResponse StreamActionsController::OnGetDummyAction(const std::shared_ptr<http::svr::HttpExchange> &client,
-														   const std::shared_ptr<mon::HostMetrics> &vhost,
-														   const std::shared_ptr<mon::ApplicationMetrics> &app,
-														   const std::shared_ptr<mon::StreamMetrics> &stream,
-														   const std::vector<std::shared_ptr<mon::StreamMetrics>> &output_streams)
+		std::shared_ptr<ov::Data> StreamActionsController::MakeCueData(const Json::Value &events)
 		{
-			logte("Called OnGetDummyAction. invoke [%s/%s/%s]", vhost->GetName().CStr(), app->GetName().GetAppName(), stream->GetName().CStr());
+			if (events.size() == 0)
+			{
+				throw http::HttpError(http::StatusCode::BadRequest, "events must have at least one event");
+			}
 
-			return app->GetConfig().ToJson();
+			// only first event is used
+			auto event = events[0];
+			if (event.isMember("cueType") == false || event["cueType"].isString() == false)
+			{
+				throw http::HttpError(http::StatusCode::BadRequest, "cueType is required in events");
+			}
+
+			ov::String cue_type = event["cueType"].asString().c_str();
+			CueEvent::CueType type = CueEvent::GetCueTypeByName(cue_type);
+			if (type == CueEvent::CueType::Unknown)
+			{
+				throw http::HttpError(http::StatusCode::BadRequest, "cueType is not supported: [%s]", cue_type.CStr());
+			}
+
+			// duration (optional)
+			uint32_t duration_msec = 0;
+			if (event.isMember("duration") == true && event["duration"].isUInt() == true)
+			{
+				duration_msec = event["duration"].asUInt();
+			}
+
+			auto cue_event = CueEvent::Create(type, duration_msec);
+
+			return cue_event->Serialize();
 		}
 
-		std::shared_ptr<pvd::Stream> StreamActionsController::GetSourceStream(const std::shared_ptr<mon::StreamMetrics> &stream)
+		std::shared_ptr<ov::Data> StreamActionsController::MakeAMFData(const Json::Value &events)
 		{
-			// Get PrivderType from SourceType
-			ProviderType provider_type = ProviderType::Unknown;
-			switch (stream->GetSourceType())
+			if (events.size() == 0)
 			{
-				case StreamSourceType::WebRTC:
-					provider_type = ProviderType::WebRTC;
-					break;
-				case StreamSourceType::Ovt:
-					provider_type = ProviderType::Ovt;
-					break;
-				case StreamSourceType::Rtmp:
-					provider_type = ProviderType::Rtmp;
-					break;
-				case StreamSourceType::Rtsp:
-					provider_type = ProviderType::Rtsp;
-					break;
-				case StreamSourceType::RtspPull:
-					provider_type = ProviderType::RtspPull;
-					break;
-				case StreamSourceType::Mpegts:
-					provider_type = ProviderType::Mpegts;
-					break;
-				case StreamSourceType::Srt:
-					provider_type = ProviderType::Srt;
-					break;
-
-				case StreamSourceType::File:
-					provider_type = ProviderType::File;
-					break;
-				case StreamSourceType::RtmpPull:
-				case StreamSourceType::Transcoder:
-				default:
-					return nullptr;
+				throw http::HttpError(http::StatusCode::BadRequest, "events must have at least one event");
 			}
 
-			auto provider = std::dynamic_pointer_cast<pvd::Provider>(ocst::Orchestrator::GetInstance()->GetProviderFromType(provider_type));
-			if (provider == nullptr)
+			// only first event is used
+			auto event = events[0];
+			if (event.isMember("amfType") == false || event["amfType"].isString() == false)
 			{
-				return nullptr;
+				throw http::HttpError(http::StatusCode::BadRequest, "amfType is required in events");
 			}
 
-			auto application = provider->GetApplicationByName(stream->GetApplicationInfo().GetName());
-			if (application == nullptr)
+			ov::String amf_type = event["amfType"].asString().c_str();
+
+			if (AmfTextDataEvent::IsMatch(amf_type))
 			{
-				return nullptr;
+				if(AmfTextDataEvent::IsValid(event) == false)
+				{
+					throw http::HttpError(http::StatusCode::BadRequest, "data is required in events");
+				}
+
+				auto amf_event = AmfTextDataEvent::Parse(event);
+				if (amf_event == nullptr)
+				{
+					throw http::HttpError(http::StatusCode::BadRequest, "Could not parse amf data");
+				}
+
+				return amf_event->Serialize();
+			}
+			else if (AmfCuePointEvent::IsMatch(amf_type))
+			{
+				if(AmfCuePointEvent::IsValid(event) == false)
+				{
+					throw http::HttpError(http::StatusCode::BadRequest, "version, preRollTimeSec is required in events");
+				}
+				
+				auto amf_event = AmfCuePointEvent::Parse(event);
+				if (amf_event == nullptr)
+				{
+					throw http::HttpError(http::StatusCode::BadRequest, "Could not parse amf data");
+				}
+
+				return amf_event->Serialize();
 			}
 
-			return application->GetStreamByName(stream->GetName());
+			return nullptr;
 		}
-
-		std::shared_ptr<LLHlsStream> StreamActionsController::GetLLHlsStream(const std::shared_ptr<mon::StreamMetrics> &stream_metric)
-		{
-			auto publisher = std::dynamic_pointer_cast<LLHlsPublisher>(ocst::Orchestrator::GetInstance()->GetPublisherFromType(PublisherType::LLHls));
-			if (publisher == nullptr)
-			{
-				return nullptr;
-			}
-
-			auto appliation = publisher->GetApplicationByName(stream_metric->GetApplicationInfo().GetName());
-			if (appliation == nullptr)
-			{
-				return nullptr;
-			}
-
-			auto stream = appliation->GetStream(stream_metric->GetName());
-			if (stream == nullptr)
-			{
-				return nullptr;
-			}
-
-			return std::dynamic_pointer_cast<LLHlsStream>(stream);
-		}
-	}
-}
+	} // namespace v1
+} // namespace api

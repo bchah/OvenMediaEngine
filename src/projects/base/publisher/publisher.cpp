@@ -53,32 +53,24 @@ namespace pub
 	bool Publisher::OnCreateApplication(const info::Application &app_info)
 	{
 		// Check configuration
-		if(app_info.IsDynamicApp() == false)
+		auto cfg_publisher_list = app_info.GetConfig().GetPublishers().GetPublisherList();
+		for(const auto &cfg_publisher : cfg_publisher_list)
 		{
-			auto cfg_publisher_list = app_info.GetConfig().GetPublishers().GetPublisherList();
-			for(const auto &cfg_publisher : cfg_publisher_list)
+			if(cfg_publisher->GetType() == GetPublisherType())
 			{
-				if(cfg_publisher->GetType() == GetPublisherType())
+				if(cfg_publisher->IsParsed())
 				{
-					if(cfg_publisher->IsParsed())
-					{
-						break;
-					}
-					else
-					{
-						// This provider is diabled
-						logtw("%s publisher is disabled in %s application, so it was not created", 
-								::StringFromPublisherType(GetPublisherType()).CStr(), app_info.GetName().CStr());
-						return true;
-					}
+					break;
+				}
+				else
+				{
+					// This provider is diabled
+					logtw("%s publisher is disabled in %s application, so it was not created", 
+							::StringFromPublisherType(GetPublisherType()).CStr(), app_info.GetVHostAppName().CStr());
+					return true;
 				}
 			}
 		}
-		else
-		{
-			// The dynamically created app activates all publishers
-		}
-
 
 		auto application = OnCreatePublisherApplication(app_info);
 		if (application == nullptr)
@@ -92,7 +84,7 @@ namespace pub
 		// 생성한 Application을 Router와 연결하고 Start
 		if (_router->RegisterObserverApp(*application.get(), application) == false)
 		{
-			logte("Failed to register application(%s/%s) to router", GetPublisherName(), app_info.GetName().CStr());
+			logte("Failed to register application(%s/%s) to router", GetPublisherName(), app_info.GetVHostAppName().CStr());
 			return false;
 		}
 		
@@ -110,7 +102,7 @@ namespace pub
 		std::unique_lock<std::shared_mutex> lock(_application_map_mutex);
 		auto item = _applications.find(app_info.GetId());
 
-		logtd("Delete the application: [%s]", app_info.GetName().CStr());
+		logtd("Delete the application: [%s]", app_info.GetVHostAppName().CStr());
 		if(item == _applications.end())
 		{
 			// Check the reason the app is not created is because it is disabled in the configuration
@@ -130,7 +122,7 @@ namespace pub
 				}
 			}
 
-			logte("%s publisher hasn't the %s application.", ::StringFromPublisherType(GetPublisherType()).CStr(), app_info.GetName().CStr());
+			logte("%s publisher hasn't the %s application.", ::StringFromPublisherType(GetPublisherType()).CStr(), app_info.GetVHostAppName().CStr());
 			return false;
 		}
 
@@ -145,7 +137,7 @@ namespace pub
 		bool result = OnDeletePublisherApplication(application);
 		if(result == false)
 		{
-			logte("Could not delete the %s application of the %s publisher", app_info.GetName().CStr(), ::StringFromPublisherType(GetPublisherType()).CStr());
+			logte("Could not delete the %s application of the %s publisher", app_info.GetVHostAppName().CStr(), ::StringFromPublisherType(GetPublisherType()).CStr());
 			return false;
 		}
 
@@ -163,7 +155,7 @@ namespace pub
 		for (auto const &x : _applications)
 		{
 			auto application = x.second;
-			if (application->GetName() == vhost_app_name)
+			if (application->GetVHostAppName() == vhost_app_name)
 			{
 				return application;
 			}
@@ -284,17 +276,17 @@ namespace pub
 		return false;
 	}
 
-	std::tuple<AccessController::VerificationResult, std::shared_ptr<const SignedPolicy>> Publisher::VerifyBySignedPolicy(const std::shared_ptr<const ov::Url> &request_url, const std::shared_ptr<ov::SocketAddress> &client_address)
+	std::tuple<AccessController::VerificationResult, std::shared_ptr<const SignedPolicy>> Publisher::VerifyBySignedPolicy(const std::shared_ptr<const ac::RequestInfo> &request_info)
 	{
 		if(_access_controller == nullptr)
 		{
 			return {AccessController::VerificationResult::Error, nullptr};
 		}
 
-		return _access_controller->VerifyBySignedPolicy(request_url, client_address);
+		return _access_controller->VerifyBySignedPolicy(request_info);
 	}
 
-	std::tuple<AccessController::VerificationResult, std::shared_ptr<const AdmissionWebhooks>> Publisher::SendCloseAdmissionWebhooks(const std::shared_ptr<const AccessController::RequestInfo> &request_info)
+	std::tuple<AccessController::VerificationResult, std::shared_ptr<const AdmissionWebhooks>> Publisher::SendCloseAdmissionWebhooks(const std::shared_ptr<const ac::RequestInfo> &request_info)
 	{
 		if(_access_controller == nullptr)
 		{
@@ -304,7 +296,7 @@ namespace pub
 		return _access_controller->SendCloseWebhooks(request_info);
 	}
 
-	std::tuple<AccessController::VerificationResult, std::shared_ptr<const AdmissionWebhooks>> Publisher::VerifyByAdmissionWebhooks(const std::shared_ptr<const AccessController::RequestInfo> &request_info)
+	std::tuple<AccessController::VerificationResult, std::shared_ptr<const AdmissionWebhooks>> Publisher::VerifyByAdmissionWebhooks(const std::shared_ptr<const ac::RequestInfo> &request_info)
 	{
 		if(_access_controller == nullptr)
 		{
@@ -313,15 +305,4 @@ namespace pub
 
 		return _access_controller->VerifyByWebhooks(request_info);
 	}
-
-	std::tuple<AccessController::VerificationResult, std::shared_ptr<const SignedToken>>  Publisher::VerifyBySignedToken(const std::shared_ptr<const ov::Url> &request_url, const std::shared_ptr<ov::SocketAddress> &client_address)
-	{
-		if(_access_controller == nullptr)
-		{
-			return {AccessController::VerificationResult::Error, nullptr};
-		}
-
-		return _access_controller->VerifyBySignedToken(request_url, client_address);
-	}
-
 }  // namespace pub

@@ -370,6 +370,11 @@ namespace pvd
 				{
 					playlist->SetHlsChunklistPathDepth(json_options["hlsChunklistPathDepth"].asInt());
 				}
+
+				if (json_options["enableTsPackaging"].isBool())
+				{
+					playlist->EnableTsPackaging(json_options["enableTsPackaging"].asBool());
+				}
 			}
 
 			for (size_t j = 0; j < json_playlist["renditions"].size(); j++)
@@ -475,7 +480,7 @@ namespace pvd
 	{
 		if (GetState() != State::DESCRIBED)
 		{
-			logte("%s/%s(%u) - Could not request to play. Before receiving describe.", GetApplicationInfo().GetName().CStr(), GetName().CStr(), GetId());
+			logte("%s/%s(%u) - Could not request to play. Before receiving describe.", GetApplicationInfo().GetVHostAppName().CStr(), GetName().CStr(), GetId());
 			return false;
 		}
 
@@ -490,7 +495,7 @@ namespace pvd
 		std::shared_lock<std::shared_mutex> lock(_packetizer_lock);
 		if (_packetizer->PacketizeMessage(OVT_PAYLOAD_TYPE_MESSAGE_REQUEST, ov::Clock::NowMSec(), message) == false)
 		{
-			logte("%s/%s(%u) - Could not request to play. Socket send error", GetApplicationInfo().GetName().CStr(), GetName().CStr(), GetId());
+			logte("%s/%s(%u) - Could not request to play. Socket send error", GetApplicationInfo().GetVHostAppName().CStr(), GetName().CStr(), GetId());
 			return false;
 		}
 
@@ -502,7 +507,7 @@ namespace pvd
 		auto message = ReceiveMessage();
 		if (message == nullptr)
 		{
-			logte("%s/%s(%u) - Could not receive message", GetApplicationInfo().GetName().CStr(), GetName().CStr(), GetId());
+			logte("%s/%s(%u) - Could not receive message", GetApplicationInfo().GetVHostAppName().CStr(), GetName().CStr(), GetId());
 			SetState(State::ERROR);
 			return false;
 		}
@@ -600,7 +605,7 @@ namespace pvd
 			auto result = ReceivePacket();
 			if (result == false)
 			{
-				logte("%s/%s(%u) - Could not receive packet : err(%d)", GetApplicationInfo().GetName().CStr(), GetName().CStr(), GetId(), static_cast<uint8_t>(result));
+				logte("%s/%s(%u) - Could not receive packet : err(%d)", GetApplicationInfo().GetVHostAppName().CStr(), GetName().CStr(), GetId(), static_cast<uint8_t>(result));
 				SetState(State::ERROR);
 				return nullptr;
 			}
@@ -665,7 +670,7 @@ namespace pvd
 		auto result = ReceivePacket(true);
 		if (result == false)
 		{
-			logte("%s/%s(%u) - Could not receive packet : err(%d)", GetApplicationInfo().GetName().CStr(), GetName().CStr(), GetId(), static_cast<uint8_t>(result));
+			logte("%s/%s(%u) - Could not receive packet : err(%d)", GetApplicationInfo().GetVHostAppName().CStr(), GetName().CStr(), GetId(), static_cast<uint8_t>(result));
 			SetState(State::ERROR);
 			return ProcessMediaResult::PROCESS_MEDIA_FAILURE;
 		}
@@ -743,7 +748,7 @@ namespace pvd
 				else
 				{
 					logte("An error occurred while receive data: An unexpected packet was received. Terminate stream thread : %s/%s(%u)",
-						  GetApplicationInfo().GetName().CStr(), GetName().CStr(), GetId());
+						  GetApplicationInfo().GetVHostAppName().CStr(), GetName().CStr(), GetId());
 					SetState(State::ERROR);
 					return PullStream::ProcessMediaResult::PROCESS_MEDIA_FAILURE;
 				}

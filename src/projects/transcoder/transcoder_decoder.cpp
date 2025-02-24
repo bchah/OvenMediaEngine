@@ -9,17 +9,17 @@
 #include "transcoder_decoder.h"
 
 #include "codec/decoder/decoder_aac.h"
-#include "codec/decoder/decoder_mp3.h"
 #include "codec/decoder/decoder_avc.h"
+#include "codec/decoder/decoder_avc_nilogan.h"
 #include "codec/decoder/decoder_avc_nv.h"
 #include "codec/decoder/decoder_avc_qsv.h"
-#include "codec/decoder/decoder_avc_nilogan.h"
 #include "codec/decoder/decoder_avc_xma.h"
 #include "codec/decoder/decoder_hevc.h"
+#include "codec/decoder/decoder_hevc_nilogan.h"
 #include "codec/decoder/decoder_hevc_nv.h"
 #include "codec/decoder/decoder_hevc_qsv.h"
-#include "codec/decoder/decoder_hevc_nilogan.h"
 #include "codec/decoder/decoder_hevc_xma.h"
+#include "codec/decoder/decoder_mp3.h"
 #include "codec/decoder/decoder_opus.h"
 #include "codec/decoder/decoder_vp8.h"
 #include "transcoder_gpu.h"
@@ -31,11 +31,13 @@
 
 std::shared_ptr<std::vector<std::shared_ptr<CodecCandidate>>> TranscodeDecoder::GetCandidates(bool hwaccels_enable, ov::String hwaccles_modules, std::shared_ptr<MediaTrack> track)
 {
-	logtd("Codec(%s), HWAccels.Enable(%s), HWAccels.Modules(%s)", GetStringFromCodecId(track->GetCodecId()).CStr(), hwaccels_enable?"true":"falase", hwaccles_modules.CStr());
+	logtd("Codec(%s), HWAccels.Enable(%s), HWAccels.Modules(%s)",
+		  GetCodecIdToString(track->GetCodecId()).CStr(), hwaccels_enable ? "true" : "false", hwaccles_modules.CStr());
 
 	ov::String configuration = "";
+	std::shared_ptr<std::vector<std::shared_ptr<CodecCandidate>>> candidate_modules = std::make_shared<std::vector<std::shared_ptr<CodecCandidate>>>();
 
-	if(hwaccels_enable == true)
+	if (hwaccels_enable == true)
 	{
 		configuration = hwaccles_modules.Trim();
 	}
@@ -44,17 +46,21 @@ std::shared_ptr<std::vector<std::shared_ptr<CodecCandidate>>> TranscodeDecoder::
 		configuration = "";
 	}
 
-	std::vector<ov::String> desire_modules;
-	std::shared_ptr<std::vector<std::shared_ptr<CodecCandidate>>> candidate_modules = std::make_shared<std::vector<std::shared_ptr<CodecCandidate>>>();
-	
+	// If the track is not video, the default module is the only candidate.
+	if (cmn::IsVideoCodec(track->GetCodecId()) == false)
+	{
+		candidate_modules->push_back(std::make_shared<CodecCandidate>(track->GetCodecId(), cmn::MediaCodecModuleId::DEFAULT, 0));
+		return candidate_modules;
+	}
+
 	// ex) hwaccels_modules = "XMA:0,NV:0,QSV:0"
-	desire_modules = configuration.Split(",");
+	std::vector<ov::String> desire_modules = configuration.Split(",");
 
 	// If no modules are configured, all modules are designated as candidates.
 	if (desire_modules.size() == 0 || configuration.IsEmpty() == true)
 	{
 		desire_modules.clear();
-		if( hwaccels_enable == true)
+		if (hwaccels_enable == true)
 		{
 			desire_modules.push_back(ov::String::FormatString("%s:%d", "XMA", ALL_GPU_ID));
 			desire_modules.push_back(ov::String::FormatString("%s:%d", "NV", ALL_GPU_ID));
@@ -65,33 +71,34 @@ std::shared_ptr<std::vector<std::shared_ptr<CodecCandidate>>> TranscodeDecoder::
 		desire_modules.push_back(ov::String::FormatString("%s:%d", DEFAULT_MODULE_NAME, ALL_GPU_ID));
 	}
 
-	for(auto &desire_module : desire_modules)
+	for (auto &desire_module : desire_modules)
 	{
 		// Pattern : <module_name>:<gpu_id> or <module_name>
-		ov::Regex pattern_regex = ov::Regex::CompiledRegex( "(?<module_name>[^,:\\s]+[\\w]+):?(?<gpu_id>[^,]*)");
+		ov::Regex pattern_regex = ov::Regex::CompiledRegex("(?<module_name>[^,:\\s]+[\\w]+):?(?<gpu_id>[^,]*)");
 
 		auto matches = pattern_regex.Matches(desire_module.CStr());
 		if (matches.GetError() != nullptr || matches.IsMatched() == false)
 		{
 			logtw("Incorrect pattern in the Modules item. module(%s)", desire_module.CStr());
-			
-			continue;;
-		}
-		auto named_group 	= matches.GetNamedGroupList();
 
-		auto module_name 	= named_group["module_name"].GetValue();
-		auto gpu_id 		= named_group["gpu_id"].GetValue().IsEmpty()?ALL_GPU_ID:ov::Converter::ToInt32(named_group["gpu_id"].GetValue());
+			continue;
+			;
+		}
+		auto named_group = matches.GetNamedGroupList();
+
+		auto module_name = named_group["module_name"].GetValue();
+		auto gpu_id = named_group["gpu_id"].GetValue().IsEmpty() ? ALL_GPU_ID : ov::Converter::ToInt32(named_group["gpu_id"].GetValue());
 
 		// If Unknown module name, skip.
 		cmn::MediaCodecModuleId module_id = cmn::GetCodecModuleIdByName(module_name);
-		if(module_id == cmn::MediaCodecModuleId::None)
+		if (module_id == cmn::MediaCodecModuleId::None)
 		{
 			logtw("Unknown codec module. name(%s)", module_name.CStr());
 			continue;
 		}
 
 		// If hardware usage is enabled, check if the module is supported.
-		if(hwaccels_enable == true)
+		if (hwaccels_enable == true)
 		{
 			for (int i = 0; i < TranscodeGPU::GetInstance()->GetDeviceCount(module_id); i++)
 			{
@@ -102,17 +109,19 @@ std::shared_ptr<std::vector<std::shared_ptr<CodecCandidate>>> TranscodeDecoder::
 			}
 		}
 
-		// 
-		if(module_id == cmn::MediaCodecModuleId::DEFAULT)
+		//
+		if (module_id == cmn::MediaCodecModuleId::DEFAULT)
 		{
 			candidate_modules->push_back(std::make_shared<CodecCandidate>(track->GetCodecId(), module_id, 0));
-		}			
+		}
 	}
-	
+
 	for (auto &candidate : *candidate_modules)
 	{
+		(void)(candidate);
+
 		logtd("Candidate module: %s(%d), %s(%d):%d",
-			  cmn::GetStringFromCodecId(candidate->GetCodecId()).CStr(),
+			  cmn::GetCodecIdToString(candidate->GetCodecId()).CStr(),
 			  candidate->GetCodecId(),
 			  cmn::GetStringFromCodecModuleId(candidate->GetModuleId()).CStr(),
 			  candidate->GetModuleId(),
@@ -122,25 +131,28 @@ std::shared_ptr<std::vector<std::shared_ptr<CodecCandidate>>> TranscodeDecoder::
 	return candidate_modules;
 }
 
-#define CASE_CREATE_CODEC_IFNEED(MODULE_ID, CLS) \
-	case cmn::MediaCodecModuleId::MODULE_ID: \
-		decoder = std::make_shared<CLS>(info); \
-		if (decoder == nullptr) \
-		{ \
-			break; \
-		} \
+#define CASE_CREATE_CODEC_IFNEED(MODULE_ID, CLS)           \
+	case cmn::MediaCodecModuleId::MODULE_ID:               \
+		decoder = std::make_shared<CLS>(*info);            \
+		if (decoder == nullptr)                            \
+		{                                                  \
+			break;                                         \
+		}                                                  \
 		track->SetCodecDeviceId(candidate->GetDeviceId()); \
-		if (decoder->Configure(track) == true) \
-		{ \
-			goto done; \
-		} \
-		if (decoder != nullptr) { decoder->Stop(); decoder = nullptr; } \
-		break; \
-
+		if (decoder->Configure(track) == true)             \
+		{                                                  \
+			goto done;                                     \
+		}                                                  \
+		if (decoder != nullptr)                            \
+		{                                                  \
+			decoder->Stop();                               \
+			decoder = nullptr;                             \
+		}                                                  \
+		break;
 
 std::shared_ptr<TranscodeDecoder> TranscodeDecoder::Create(
 	int32_t decoder_id,
-	const info::Stream &info,
+	std::shared_ptr<info::Stream> info,
 	std::shared_ptr<MediaTrack> track,
 	std::shared_ptr<std::vector<std::shared_ptr<CodecCandidate>>> candidates,
 	CompleteHandler complete_handler)
@@ -184,9 +196,9 @@ std::shared_ptr<TranscodeDecoder> TranscodeDecoder::Create(
 			switch (candidate->GetModuleId())
 			{
 				default:
-				CASE_CREATE_CODEC_IFNEED(DEFAULT, DecoderVP8)
+					CASE_CREATE_CODEC_IFNEED(DEFAULT, DecoderVP8)
 
-					break;					
+					break;
 			}
 		}
 		else if (candidate->GetCodecId() == cmn::MediaCodecId::Aac)
@@ -194,7 +206,7 @@ std::shared_ptr<TranscodeDecoder> TranscodeDecoder::Create(
 			switch (candidate->GetModuleId())
 			{
 				default:
-				CASE_CREATE_CODEC_IFNEED(DEFAULT, DecoderAAC)
+					CASE_CREATE_CODEC_IFNEED(DEFAULT, DecoderAAC)
 					break;
 			}
 		}
@@ -203,8 +215,8 @@ std::shared_ptr<TranscodeDecoder> TranscodeDecoder::Create(
 			switch (candidate->GetModuleId())
 			{
 				default:
-				CASE_CREATE_CODEC_IFNEED(DEFAULT, DecoderOPUS)
-					break;					
+					CASE_CREATE_CODEC_IFNEED(DEFAULT, DecoderOPUS)
+					break;
 			}
 		}
 		else if (candidate->GetCodecId() == cmn::MediaCodecId::Mp3)
@@ -212,10 +224,10 @@ std::shared_ptr<TranscodeDecoder> TranscodeDecoder::Create(
 			switch (candidate->GetModuleId())
 			{
 				default:
-				CASE_CREATE_CODEC_IFNEED(DEFAULT, DecoderMP3)
-					break;					
+					CASE_CREATE_CODEC_IFNEED(DEFAULT, DecoderMP3)
+					break;
 			}
-		}		
+		}
 		else
 		{
 			OV_ASSERT(false, "Not supported codec: %d", track->GetCodecId());
@@ -232,11 +244,11 @@ done:
 		decoder->SetDecoderId(decoder_id);
 		decoder->SetCompleteHandler(complete_handler);
 
-		logti("The decoder has been created successfully. track(#%d) codec(%s), module(%s:%d)",
-			track->GetId(),
-			cmn::GetStringFromCodecId(track->GetCodecId()).CStr(),
-			cmn::GetStringFromCodecModuleId(track->GetCodecModuleId()).CStr(),
-			track->GetCodecDeviceId());		
+		logti("The decoder has been created. track(#%d) codec(%s), module(%s:%d)",
+			  track->GetId(),
+			  cmn::GetCodecIdToString(track->GetCodecId()).CStr(),
+			  cmn::GetStringFromCodecModuleId(track->GetCodecModuleId()).CStr(),
+			  track->GetCodecDeviceId());
 	}
 
 	return decoder;
@@ -305,35 +317,42 @@ void TranscodeDecoder::SetDecoderId(int32_t decoder_id)
 
 bool TranscodeDecoder::Configure(std::shared_ptr<MediaTrack> track)
 {
+	if (track == nullptr)
+	{
+		return false;
+	}
 	_track = track;
 
-	auto name = ov::String::FormatString("decoder_%s_%d", ::avcodec_get_name(GetCodecID()), _track->GetId());
+	auto name = ov::String::FormatString("dec_%s_%d", ::avcodec_get_name(GetCodecID()), _track->GetId());
 	auto urn = std::make_shared<info::ManagedQueue::URN>(
-		_stream_info.GetApplicationInfo().GetName(),
+		_stream_info.GetApplicationInfo().GetVHostAppName(),
 		_stream_info.GetName(),
 		"trs",
 		name);
 	_input_buffer.SetUrn(urn);
 	_input_buffer.SetThreshold(MAX_QUEUE_SIZE);
 
+	_kill_flag = false;
 
-
-	return (_track != nullptr);
-}
-
-void TranscodeDecoder::SendBuffer(std::shared_ptr<const MediaPacket> packet)
-{
-	_input_buffer.Enqueue(std::move(packet));
-}
-
-void TranscodeDecoder::SendOutputBuffer(TranscodeResult result, std::shared_ptr<MediaFrame> frame)
-{
-	// Invoke callback function when encoding/decoding is completed.
-	if (_complete_handler)
+	try
 	{
-		frame->SetTrackId(_decoder_id);
-		_complete_handler(result, _decoder_id, std::move(frame));
+		_codec_thread = std::thread(&TranscodeDecoder::CodecThread, this);
+		pthread_setname_np(_codec_thread.native_handle(), ov::String::FormatString("DEC-%s-t%u", avcodec_get_name(GetCodecID()), _track->GetId()).CStr());
+
+		// Initialize the codec and wait for completion.
+		if (_codec_init_event.Get() == false)
+		{
+			_kill_flag = true;
+			return false;
+		}
 	}
+	catch (const std::system_error &e)
+	{
+		_kill_flag = true;
+		return false;
+	}
+
+	return true;
 }
 
 void TranscodeDecoder::Stop()
@@ -347,5 +366,25 @@ void TranscodeDecoder::Stop()
 		_codec_thread.join();
 
 		logtd(ov::String::FormatString("decoder %s thread has ended", avcodec_get_name(GetCodecID())).CStr());
+	}
+}
+
+void TranscodeDecoder::SendBuffer(std::shared_ptr<const MediaPacket> packet)
+{
+	_input_buffer.Enqueue(std::move(packet));
+}
+
+void TranscodeDecoder::SetCompleteHandler(CompleteHandler complete_handler)
+{
+	_complete_handler = std::move(complete_handler);
+}
+
+void TranscodeDecoder::Complete(TranscodeResult result, std::shared_ptr<MediaFrame> frame)
+{
+	// Invoke callback function when encoding/decoding is completed.
+	if (_complete_handler)
+	{
+		frame->SetTrackId(_decoder_id);
+		_complete_handler(result, _decoder_id, std::move(frame));
 	}
 }

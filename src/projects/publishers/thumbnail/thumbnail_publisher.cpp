@@ -197,7 +197,7 @@ bool ThumbnailPublisher::OnDeletePublisherApplication(const std::shared_ptr<pub:
 	auto file_application = std::static_pointer_cast<ThumbnailApplication>(application);
 	if (file_application == nullptr)
 	{
-		logte("Could not found thumbnail application. app:%s", file_application->GetName().CStr());
+		logte("Could not found thumbnail application. app:%s", file_application->GetVHostAppName().CStr());
 		return false;
 	}
 
@@ -206,7 +206,7 @@ bool ThumbnailPublisher::OnDeletePublisherApplication(const std::shared_ptr<pub:
 
 std::shared_ptr<ThumbnailInterceptor> ThumbnailPublisher::CreateInterceptor()
 {
-	ov::String thumbnail_url_pattern = R"(.+thumb\.(jpg|png)$)";
+	ov::String thumbnail_url_pattern = R"(.+thumb\.(jpg|png|webp)$)";
 
 	auto http_interceptor = std::make_shared<ThumbnailInterceptor>();
 
@@ -235,8 +235,9 @@ std::shared_ptr<ThumbnailInterceptor> ThumbnailPublisher::CreateInterceptor()
 		// Access Control
 		if (access_control_enabled == true)
 		{
+			auto request_info = std::make_shared<ac::RequestInfo>(request_url, nullptr, request->GetRemote(), request);
 			// Signed Policy
-			auto [signed_policy_result, signed_policy] = Publisher::VerifyBySignedPolicy(request_url, remote_address);
+			auto [signed_policy_result, signed_policy] = Publisher::VerifyBySignedPolicy(request_info);
 			if (signed_policy_result == AccessController::VerificationResult::Pass)
 			{
 
@@ -261,8 +262,6 @@ std::shared_ptr<ThumbnailInterceptor> ThumbnailPublisher::CreateInterceptor()
 			}
 
 			// Admission Webhooks
-			auto request_info = std::make_shared<AccessController::RequestInfo>(request_url, remote_address, request->GetHeader("USER-AGENT"));
-
 			auto [webhooks_result, admission_webhooks] = VerifyByAdmissionWebhooks(request_info);
 			if (webhooks_result == AccessController::VerificationResult::Off)
 			{
@@ -356,6 +355,10 @@ std::shared_ptr<ThumbnailInterceptor> ThumbnailPublisher::CreateInterceptor()
 		{
 			media_codec_id = cmn::MediaCodecId::Png;
 		}
+		else if (request_url->File().LowerCaseString().IndexOf(".webp") >= 0)
+		{
+			media_codec_id = cmn::MediaCodecId::Webp;
+		}		
 		else 
 		{
 			response->AppendString(ov::String::FormatString("Unsupported file extension"));
@@ -378,7 +381,7 @@ std::shared_ptr<ThumbnailInterceptor> ThumbnailPublisher::CreateInterceptor()
 			return http::svr::NextHandler::DoNotCall;
 		}
 
-		response->SetHeader("Content-Type", (media_codec_id == cmn::MediaCodecId::Jpeg) ? "image/jpeg" : "image/png");
+		response->SetHeader("Content-Type", MimeTypeFromMediaCodecId(media_codec_id));
 		response->SetStatusCode(http::StatusCode::OK);
 		response->AppendData(std::move(endcoded_video_frame->Clone()));
 		auto sent_size = response->Response();
@@ -403,5 +406,19 @@ std::shared_ptr<ThumbnailInterceptor> ThumbnailPublisher::CreateInterceptor()
 	});
 
 	return http_interceptor;
-} 
+}
 
+ov::String ThumbnailPublisher::MimeTypeFromMediaCodecId(const cmn::MediaCodecId &type)
+{
+	switch (type)
+	{
+		case cmn::MediaCodecId::Jpeg:
+			return "image/jpeg";
+		case cmn::MediaCodecId::Png:
+			return "image/png";
+		case cmn::MediaCodecId::Webp:
+			return "image/webp";
+		default:
+			return "application/octet-stream";
+	}
+}

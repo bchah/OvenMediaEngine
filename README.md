@@ -18,6 +18,8 @@ OvenSpace is a sub-second latency streaming demo service using [OvenMediaEngine]
 * Ingest
   * Push: WebRTC, WHIP, SRT, RTMP, MPEG-2 TS
   * Pull: RTSP
+  * Scheduled Channel (Pre-recorded Live)
+  * Multiplex Channel (Duplicate stream / Mux tracks)
 * Adaptive Bitrate Streaming (ABR) for LLHLS and WebRTC
 * Low Latency Streaming using LLHLS
   * DVR (Live Rewind)
@@ -32,8 +34,12 @@ OvenSpace is a sub-second latency streaming demo service using [OvenMediaEngine]
     * <i>VP8, H.264</i>
   * In-band FEC (Forward Error Correction)
     * <i>Opus</i>
+* Legacy HLS (HLS version 3)
+  * MPEG-2 TS Container
+  * Audio/Video Muxed
+  * DVR
 * Embedded Live Transcoder
-  * Video: VP8, H.264, Pass-through
+  * Video: VP8, H.264, H.265(Hardware only), Pass-through
   * Audio: Opus, AAC, Pass-through
 * Clustering (Origin-Edge Structure)
 * Monitoring
@@ -53,7 +59,8 @@ Although we have tested OvenMediaEngine on the platforms listed below, it may wo
 
 * [Docker](https://hub.docker.com/r/airensoft/ovenmediaengine)
 * Ubuntu 18+
-* CentOS 7+
+* Rocky Linux 9+
+* AlmaLinux 9+
 * Fedora 28+
 
 ## Quick Start

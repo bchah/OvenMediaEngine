@@ -197,6 +197,8 @@ namespace serdes
 
 		SetString(response, "state", record->GetStateString(), Optional::False);
 
+		SetBool(response, "isConfig", record->IsByConfig());
+
 		SetString(response, "id", record->GetId(), Optional::False);
 
 		SetString(response, "metadata", record->GetMetadata(), Optional::True);

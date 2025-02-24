@@ -53,6 +53,13 @@ void LLHlsChunklist::Release()
 	_renditions.clear();
 }
 
+void LLHlsChunklist::SetEndList()
+{
+	_end_list = true;
+
+	UpdateCacheForDefaultChunklist();
+}
+
 void LLHlsChunklist::SaveOldSegmentInfo(bool enable)
 {
 	_keep_old_segments = enable;
@@ -236,9 +243,7 @@ ov::String LLHlsChunklist::MakeExtXKey() const
 			}
 			else if (_cenc_property.scheme == bmff::CencProtectScheme::Cenc)
 			{
-				// NOT Support yet
 				xkey.AppendFormat("METHOD=SAMPLE-AES-CTR");
-				return "";
 			}
 
 			xkey.AppendFormat(",URI=\"data:text/plain;base64,%s\"", ov::Base64::Encode(pssh.pssh_box_data, false).CStr());
@@ -274,10 +279,15 @@ ov::String LLHlsChunklist::MakeExtXKey() const
 ov::String LLHlsChunklist::MakeChunklist(const ov::String &query_string, bool skip, bool legacy, bool rewind, bool vod, uint32_t vod_start_segment_number) const
 {
 	std::shared_lock<std::shared_mutex> segment_lock(_segments_guard);
-
+	uint8_t version = 6;
 	if (_segments.size() == 0)
 	{
 		return "";
+	}
+
+	if (_end_list == true)
+	{
+		vod = true;
 	}
 
 	if (vod == true)
@@ -292,7 +302,16 @@ ov::String LLHlsChunklist::MakeChunklist(const ov::String &query_string, bool sk
 
 	playlist.AppendFormat("#EXTM3U\n");
 
-	playlist.AppendFormat("#EXT-X-VERSION:%d\n", 10);
+	// debug info
+	// playlist.AppendFormat("#// query_string(%s) skip(%s) legacy(%s) rewind(%s) vod(%s) vod_start_segment_number(%u)\n", 
+	//  					query_string.CStr(), skip ? "YES" : "NO", legacy ? "YES" : "NO", rewind ? "YES" : "NO", vod ? "YES" : "NO", vod_start_segment_number);
+
+
+	if (legacy == true)
+	{
+		version = 6;
+	}
+	playlist.AppendFormat("#EXT-X-VERSION:%d\n", version);
 	// Note that in protocol version 6, the semantics of the EXT-
 	// X-TARGETDURATION tag changed slightly.  In protocol version 5 and
 	// earlier it indicated the maximum segment duration; in protocol
@@ -311,7 +330,7 @@ ov::String LLHlsChunklist::MakeChunklist(const ov::String &query_string, bool sk
 	else
 	{
 		// X-PLAYLIST-TYPE
-		playlist.AppendFormat("#EXT-X-SERVER-CONTROL:HOLD-BACK=%u\n", target_duration * 3);
+		// playlist.AppendFormat("#EXT-X-SERVER-CONTROL:HOLD-BACK=%u\n", target_duration * 3);
 	}
 
 	std::shared_ptr<LLHlsChunklist::SegmentInfo> first_segment = nullptr;
@@ -320,6 +339,20 @@ ov::String LLHlsChunklist::MakeChunklist(const ov::String &query_string, bool sk
 	if (rewind == true)
 	{
 		first_segment = _segments.begin()->second;
+	}
+	else if (vod == true)
+	{
+		// find vod_start_segment_number
+		auto it = _segments.find(vod_start_segment_number);
+		if (it != _segments.end())
+		{
+			first_segment = it->second;
+		}
+		else
+		{
+			// vod_start_segment_number should be in old_segments
+			first_segment = _segments.begin()->second;
+		}
 	}
 	else
 	{
@@ -339,11 +372,6 @@ ov::String LLHlsChunklist::MakeChunklist(const ov::String &query_string, bool sk
 		}
 
 		first_segment = it->second;
-	}
-
-	if (rewind == false)
-	{
-		logti("track(%d) lagacy(%s) rewind(%s) first_segment(%lld) last_segment(%lld)", _track->GetId(), legacy == true ? "true" : "false", rewind == true ? "true" : "false", first_segment->GetSequence(), last_segment->GetSequence());
 	}
 
 	playlist.AppendFormat("#EXT-X-MEDIA-SEQUENCE:%u\n", vod == false ? first_segment->GetSequence() : 0);
@@ -461,7 +489,8 @@ ov::String LLHlsChunklist::MakeChunklist(const ov::String &query_string, bool sk
 	segment_lock.unlock();
 
 #if 1
-	if (vod == false)
+	// only for live and low-latency mode
+	if (vod == false && legacy == false)
 	{
 		// Output #EXT-X-RENDITION-REPORT
 		// lock

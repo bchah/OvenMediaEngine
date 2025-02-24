@@ -12,26 +12,30 @@ scheme://domain.com:port/app/stream?policy=<>&signature=<>
 
 ### Policy
 
-Policy is in json format and provides the following properties.
+Policy is in JSON format and provides the following properties.
 
 ```
 {
     "url_activate":1399711581,                                    
     "url_expire":1399721581,                                    
     "stream_expire":1399821581,                                    
-    "allow_ip":"192.168.100.5/32"
+    "allow_ip":"192.168.100.5/32",
+    "real_ip":"111.111.111.111/32"
 }
 ```
 
-| Key                                                    | Value                                   | Description                                                                                |
-| ------------------------------------------------------ | --------------------------------------- | ------------------------------------------------------------------------------------------ |
-| <p>url_expire</p><p><strong>(Required)</strong></p>    | \<Number> Milliseconds since unix epoch | <p>The time the URL expires<br>Reject on request after the expiration</p>                  |
-| <p>url_activate</p><p><strong>(Optional)</strong></p>  | \<Number> Milliseconds since unix epoch | <p>The time the URL activates<br>Reject on request before activation</p>                   |
-| <p>stream_expire</p><p><strong>(Optional)</strong></p> | \<Number> Milliseconds since unix epoch | <p>The time the Stream expires<br>Transmission and playback stop when the time expires</p> |
-| <p>allow_ip</p><p><strong>(Optional)</strong></p>      | \<String> IPv4 CIDR                     | Allowed IP address range, 192.168.0.0/24                                                   |
+<table><thead><tr><th width="156.33333333333331">Key</th><th width="162">Value</th><th>Description</th></tr></thead><tbody><tr><td><p>url_expire</p><p><strong>(Required)</strong></p></td><td>&#x3C;Number> Milliseconds since unix epoch</td><td><strong>The time the URL expires</strong><br>Reject on request after the expiration</td></tr><tr><td><p>url_activate</p><p><strong>(Optional)</strong></p></td><td>&#x3C;Number> Milliseconds since unix epoch</td><td><strong>The time the URL activates</strong><br>Reject on request before activation</td></tr><tr><td><p>stream_expire</p><p><strong>(Optional)</strong></p></td><td>&#x3C;Number> Milliseconds since unix epoch</td><td><strong>The time the Stream expires</strong><br>Transmission and playback stop when the time expires</td></tr><tr><td><p>allow_ip</p><p><strong>(Optional)</strong></p></td><td>&#x3C;String> IPv4 CIDR</td><td><p><strong>Allowed IP Address Range</strong></p><p>Check the IP address of the client connected to the server</p></td></tr><tr><td>real_ip<br><strong>(Optional)</strong></td><td>&#x3C;String> IPv4 CIDR</td><td><p><strong>Allowed IP Address Range</strong></p><p>Check the IP address of the client forwarded by the proxy server</p></td></tr></tbody></table>
 
 {% hint style="info" %}
 **url\_expire** means the time the URL is valid, so if you connect before the URL expires, you can continue to use it, and sessions that have already been connected will not be deleted even if the time expires. However, **stream\_expire** forcibly terminates the session when the time expires even if it is already playing.
+{% endhint %}
+
+{% hint style="info" %}
+If `real_ip` is in the policy, OME searches for and checks the values ​​in the following order.
+
+1. The value of the **X-REAL-IP** header&#x20;
+2. The value of the first item of **X-FORWARDED-FOR**&#x20;
+3. The IP of the client that actually connected
 {% endhint %}
 
 ### Signature
@@ -55,12 +59,33 @@ When creating a signature, you cannot omit the default port such as http port 80
 {% endhint %}
 
 {% hint style="danger" %}
-When using SignedPolicy with SRT providers, only use the **streamid** portion of the URL, e.g. srt://myserver:9999?streamid=**srt://myserver:9999/app/stream?policy=abc123**
+When using SignedPolicy with [SRT providers](../live-source/srt.md), only use the **streamid** portion of the URL, e.g. srt://myserver:9999?streamid=**srt://myserver:9999/app/stream?policy=abc123**
 {% endhint %}
+
+{% hint style="danger" %}
+When using SignedPolicy with [SRT publishers](../streaming/srt.md), you must generate the SignedPolicy using the  `streamid`.
+
+
+
+For example, to generate a SignedPolicy for the URL `srt://1.2.3.4:9998?streamid=default/app/stream`, you can use the following command:
+
+```bash
+$ ./simple_signed_policy_url_generator.sh ome_is_the_best \
+    srt://default/app/stream signature policy 600
+[URL] srt://default/app/stream?policy=__POLICY__&signature=__SIGNATURE__
+[Percent encoded URL] srt%3A//default/app/stream%3Fpolicy%3D__POLICY__%26signature%3D__SIGNATURE__
+```
+
+
+
+When the SignedPolicy is applied, the final SRT URL becomes `srt://1.2.3.4:9998?streamid=default%2Fapp%2Fstream%3Fpolicy%3D__POLICY__%26signature%3D__SIGNATURE__`.
+{% endhint %}
+
+
 
 ## Configuration
 
-To enable SignedPolicy, you need to add the following \<SignedPolicy> setting in Server.xml under \<VirtualHost>.
+To enable SignedPolicy, you need to add the following `<SignedPolicy>` setting in `Server.xml` under `<VirtualHost>`.
 
 ```
 <VirtualHost>

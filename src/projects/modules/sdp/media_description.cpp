@@ -306,7 +306,7 @@ bool MediaDescription::ParsingMediaLine(char type, std::string content)
 				SetPort(ov::Converter::ToUInt32(match.GetGroupAt(2).GetValue().CStr()));
 
 				ov::String protocol = match.GetGroupAt(3).GetValue();
-				if (protocol.UpperCaseString() == "UDP/TLS/RTP/SAVPF")
+				if (protocol.UpperCaseString() == "UDP/TLS/RTP/SAVPF" || protocol.UpperCaseString() == "UDP/TLS/RTP/SAVP")
 				{
 					UseDtls(true);
 				}
@@ -540,6 +540,12 @@ bool MediaDescription::ParsingMediaLine(char type, std::string content)
 					if (match.GetGroupCount() != 2 + 1)
 					{
 						parsing_error = true;
+						break;
+					}
+
+					if (GetSsrc() != 0)
+					{
+						// Already set
 						break;
 					}
 

@@ -160,7 +160,7 @@ bool RtcStream::Start()
 
 		if (IsSupportedCodec(track->GetCodecId()) == false)
 		{
-			logti("RtcStream(%s/%s) - Ignore unsupported codec(%s)", GetApplication()->GetName().CStr(), GetName().CStr(), StringFromMediaCodecId(track->GetCodecId()).CStr());
+			logti("RtcStream(%s/%s) - Ignore unsupported codec(%s)", GetApplication()->GetVHostAppName().CStr(), GetName().CStr(), StringFromMediaCodecId(track->GetCodecId()).CStr());
 			continue;
 		}
 
@@ -187,15 +187,39 @@ bool RtcStream::Start()
 		}
 	}
 
-	// Create Default Playlist for no file name (ws://domain/app/stream)
-	_default_playlist_name = ov::Random::GenerateString(8);
-	auto rtc_master_playlist = std::make_shared<RtcMasterPlaylist>(_default_playlist_name, _default_playlist_name);
-	rtc_master_playlist->SetWebRtcAutoAbr(false);
-	rtc_master_playlist->AddRendition(std::make_shared<RtcRendition>("default", _first_video_track, _first_audio_track));
+	if (webrtc_config.ShouldCreateDefaultPlaylist() == true)
+	{
+		// Create Default Playlist for no file name (ws://domain/app/stream)
+		_default_playlist_name = "webrtc_default";
 
-	// lock
-	std::lock_guard<std::shared_mutex> lock(_rtc_master_playlist_map_lock);
-	_rtc_master_playlist_map[_default_playlist_name] = rtc_master_playlist;
+		auto default_playlist = GetPlaylist(_default_playlist_name);
+		if (default_playlist == nullptr)
+		{
+			auto playlist = std::make_shared<info::Playlist>("webrtc_default", _default_playlist_name);
+			auto rendition = std::make_shared<info::Rendition>("default", _first_video_track ? _first_video_track->GetVariantName() : "", _first_audio_track ? _first_audio_track->GetVariantName() : "");
+
+			playlist->AddRendition(rendition);
+			playlist->SetWebRtcAutoAbr(false);
+
+			AddPlaylist(playlist);
+		}
+	
+		auto rtc_master_playlist = CreateRtcMasterPlaylist(_default_playlist_name);
+
+		// lock
+		std::lock_guard<std::shared_mutex> lock(_rtc_master_playlist_map_lock);
+		_rtc_master_playlist_map[_default_playlist_name] = rtc_master_playlist;
+	}
+	else
+	{
+		logti("RtcStream(%s/%s) - Default playlist creation is disabled", GetApplication()->GetVHostAppName().CStr(), GetName().CStr());
+		if (GetPlaylists().size() == 0)
+		{
+			logtw("RtcStream(%s/%s) - There is no playlist, WebRTC will not work for this stream.", GetApplication()->GetVHostAppName().CStr(), GetName().CStr());
+			Stop(); // Release resources
+			return false;
+		}
+	}
 
 	logti("WebRTC Stream has been created : %s/%u\nRtx(%s) Ulpfec(%s) JitterBuffer(%s) PlayoutDelay(%s min:%d max: %d)", 
 									GetName().CStr(), GetId(),
@@ -361,9 +385,10 @@ std::shared_ptr<SessionDescription> RtcStream::CreateSessionDescription(const ov
 		return nullptr;
 	}
 
-	auto offer_sdp = std::make_shared<SessionDescription>();
+	auto offer_sdp = std::make_shared<SessionDescription>(SessionDescription::SdpType::Offer);
 
 	offer_sdp->SetOrigin("OvenMediaEngine", ov::Random::GenerateUInt32(), 2, "IN", 4, "127.0.0.1");
+	offer_sdp->SetExtmapAllowMixed(true);
 	offer_sdp->SetTiming(0, 0);
 	offer_sdp->SetIceOption("trickle");
 	offer_sdp->SetIceUfrag(ov::Random::GenerateString(8));
@@ -689,7 +714,7 @@ void RtcStream::PacketizeVideoFrame(const std::shared_ptr<MediaPacket> &media_pa
 	auto media_track = GetTrack(media_packet->GetTrackId());
 	if (media_track == nullptr)
 	{
-		logtw("RtcStream(%s/%s) - MediaTrack(%u) is not found", GetApplication()->GetName().CStr(), GetName().CStr(), media_packet->GetTrackId());
+		logtw("RtcStream(%s/%s) - MediaTrack(%u) is not found", GetApplication()->GetVHostAppName().CStr(), GetName().CStr(), media_packet->GetTrackId());
 		return;
 	}
 
@@ -743,7 +768,7 @@ void RtcStream::PacketizeAudioFrame(const std::shared_ptr<MediaPacket> &media_pa
 	auto media_track = GetTrack(media_packet->GetTrackId());
 	if (media_track == nullptr)
 	{
-		logtw("RtcStream(%s/%s) - MediaTrack(%u) is not found", GetApplication()->GetName().CStr(), GetName().CStr(), media_packet->GetTrackId());
+		logtw("RtcStream(%s/%s) - MediaTrack(%u) is not found", GetApplication()->GetVHostAppName().CStr(), GetName().CStr(), media_packet->GetTrackId());
 		return;
 	}
 

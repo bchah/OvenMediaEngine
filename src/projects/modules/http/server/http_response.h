@@ -34,6 +34,12 @@ namespace http
 			// Get Reason
 			ov::String GetReason() const;
 
+			void SetMethod(Method method);
+			Method GetMethod() const;
+
+			void SetIfNoneMatch(const ov::String &etag);
+			const ov::String &GetIfNoneMatch() const;
+
 			// reason = default
 			void SetStatusCode(StatusCode status_code);
 			// custom reason
@@ -89,6 +95,8 @@ namespace http
 			virtual int32_t SendHeader();
 			virtual int32_t SendPayload();
 
+			ov::String GetEtag();
+
 			std::shared_ptr<ov::ClientSocket> _client_socket;
 			std::shared_ptr<ov::TlsServerData> _tls_data;
 
@@ -123,6 +131,12 @@ namespace http
 			// Responsed time
 			std::chrono::system_clock::time_point _response_time;
 			uint32_t _sent_size = 0;
+
+			Method _method = Method::Unknown;
+
+			bool _etag_enabled_by_config = false;
+			ov::String _if_none_match = "";
+			std::shared_ptr<ov::Data> _response_hash = nullptr;
 		};
 	}  // namespace svr
 }  // namespace http

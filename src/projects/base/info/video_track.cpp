@@ -15,12 +15,15 @@ VideoTrack::VideoTrack()
 	  _video_timescale(0),
 	  _width(0),
 	  _height(0),
-		_key_frame_interval(0),
+	  _key_frame_interval(0),
 	  _key_frame_interval_conf(0),
+	  _key_frame_interval_type_conf(cmn::KeyFrameIntervalType::FRAME),
 	  _b_frames(0),
 	  _has_bframe(false),
 	  _preset(""),
-	  _thread_count(0)
+	  _thread_count(0),
+	  _skip_frames_conf(-1), // Default value is -1
+	  _lookahead_conf(-1)
 {
 }
 
@@ -106,14 +109,24 @@ int32_t VideoTrack::GetKeyFrameInterval() const
 	return _key_frame_interval;
 }
 
-void VideoTrack::SetKeyFrameIntervalByMeasured(int32_t key_frame_interval)
+void VideoTrack::SetKeyFrameIntervalByMeasured(double key_frame_interval)
 {
 	_key_frame_interval = key_frame_interval;
 }
 
-int32_t VideoTrack::GetKeyFrameIntervalByMeasured() const
+double VideoTrack::GetKeyFrameIntervalByMeasured() const
 {
 	return _key_frame_interval;
+}
+
+void VideoTrack::SetKeyFrameIntervalLastet(int32_t key_frame_interval)
+{
+	_key_frame_interval_latest = key_frame_interval;
+}
+
+int32_t VideoTrack::GetKeyFrameIntervalLatest() const
+{
+	return _key_frame_interval_latest;
 }
 
 void VideoTrack::SetKeyFrameIntervalByConfig(int32_t key_frame_interval)
@@ -124,6 +137,16 @@ void VideoTrack::SetKeyFrameIntervalByConfig(int32_t key_frame_interval)
 int32_t VideoTrack::GetKeyFrameIntervalByConfig() const
 {
 	return _key_frame_interval_conf;
+}
+
+void VideoTrack::SetKeyFrameIntervalTypeByConfig(cmn::KeyFrameIntervalType key_frame_interval_type)
+{
+	_key_frame_interval_type_conf = key_frame_interval_type;
+}
+
+cmn::KeyFrameIntervalType VideoTrack::GetKeyFrameIntervalTypeByConfig() const
+{
+	return _key_frame_interval_type_conf;
 }
 
 void VideoTrack::SetBFrames(int32_t b_frames)
@@ -180,6 +203,16 @@ double VideoTrack::GetFrameRateByMeasured() const
 	return _framerate;
 }
 
+void VideoTrack::SetFrameRateLastSecond(double framerate)
+{
+	_framerate_last_second = framerate;
+}
+
+double VideoTrack::GetFrameRateLastSecond() const
+{
+	return _framerate_last_second;
+}
+
 void VideoTrack::SetFrameRateByConfig(double framerate)
 {
 	_framerate_conf = framerate;
@@ -188,6 +221,16 @@ void VideoTrack::SetFrameRateByConfig(double framerate)
 double VideoTrack::GetFrameRateByConfig() const
 {
 	return _framerate_conf;
+}
+
+void VideoTrack::SetDeltaFrameCountSinceLastKeyFrame(int32_t delta_frame_count)
+{
+	_delta_frame_count_since_last_key_frame = delta_frame_count;
+}
+
+int32_t VideoTrack::GetDeltaFramesSinceLastKeyFrame() const
+{
+	return _delta_frame_count_since_last_key_frame;
 }
 
 void VideoTrack::SetWidthByConfig(int32_t width)
@@ -209,3 +252,32 @@ int32_t VideoTrack::GetHeightByConfig() const
 	return _height_conf;
 }
 
+void VideoTrack::SetSkipFramesByConfig(int32_t skip_frames)
+{
+	_skip_frames_conf = skip_frames;
+}
+
+int32_t VideoTrack::GetSkipFramesByConfig() const
+{
+	return _skip_frames_conf;
+}
+
+bool VideoTrack::IsKeyframeDecodeOnly() const
+{
+	return _keyframe_decode_only;
+}
+
+void VideoTrack::SetKeyframeDecodeOnly(bool keyframe_decode_only)
+{
+	_keyframe_decode_only = keyframe_decode_only;
+}
+
+void VideoTrack::SetLookaheadByConfig(int32_t lookahead)
+{
+	_lookahead_conf = lookahead;
+}
+
+int32_t VideoTrack::GetLookaheadByConfig() const
+{
+	return _lookahead_conf;
+}

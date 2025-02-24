@@ -19,52 +19,54 @@ TranscoderStreamInternal::~TranscoderStreamInternal()
 {
 }
 
-ov::String TranscoderStreamInternal::GetIdentifiedForVideoProfile(const uint32_t track_id, const cfg::vhost::app::oprf::VideoProfile &profile)
+ov::String TranscoderStreamInternal::ProfileToSerialize(const uint32_t track_id, const cfg::vhost::app::oprf::VideoProfile &profile)
 {
 	if (profile.IsBypass() == true)
 	{
-		return ov::String::FormatString("In_T%d_Out_Pbypass", track_id);
+		return ov::String::FormatString("I=T%d,O=bypass", track_id);
 	}
 
-	auto unique_profile_name = ov::String::FormatString("In_T%d_Out_C%s-%d-%.02f-%d-%d",
+	auto unique_profile_name = ov::String::FormatString("I=%d,O=%s:%d:%.02f:%d:%d:%d",
 									track_id,
 									profile.GetCodec().CStr(),
 									profile.GetBitrate(),
 									profile.GetFramerate(),
+									profile.GetSkipFrames(),
 									profile.GetWidth(),
 									profile.GetHeight());
 
 	if(profile.GetPreset().IsEmpty() == false)
 	{
-		unique_profile_name +=  ov::String::FormatString("-Pr%s", profile.GetPreset().CStr());
+		unique_profile_name +=  ov::String::FormatString(":%s", profile.GetPreset().CStr());
 	}
 
 	if(profile.GetProfile().IsEmpty() == false)
 	{
-		unique_profile_name +=  ov::String::FormatString("-Pf%s", profile.GetProfile().CStr());
+		unique_profile_name +=  ov::String::FormatString(":%s", profile.GetProfile().CStr());
 	}
 
 	return unique_profile_name;
 }
 
-ov::String TranscoderStreamInternal::GetIdentifiedForImageProfile(const uint32_t track_id, const cfg::vhost::app::oprf::ImageProfile &profile)
+ov::String TranscoderStreamInternal::ProfileToSerialize(const uint32_t track_id, const cfg::vhost::app::oprf::ImageProfile &profile)
 {
-	return ov::String::FormatString("In_T%d_Out_C%s-%.02f-%d-%d",
+	return ov::String::FormatString("I=%d,O=%s:%.02f:%d:%d:%d",
 									track_id,
 									profile.GetCodec().CStr(),
 									profile.GetFramerate(),
+									profile.GetSkipFrames(),
 									profile.GetWidth(),
 									profile.GetHeight());
 }
 
-ov::String TranscoderStreamInternal::GetIdentifiedForAudioProfile(const uint32_t track_id, const cfg::vhost::app::oprf::AudioProfile &profile)
+ov::String TranscoderStreamInternal::ProfileToSerialize(const uint32_t track_id, const cfg::vhost::app::oprf::AudioProfile &profile)
 {
 	if (profile.IsBypass() == true)
 	{
-		return ov::String::FormatString("In_T%d_Out_Pbypass", track_id);
+		return ov::String::FormatString("I=%d,O=bypass", track_id);
 	}
 
-	return ov::String::FormatString("In_T%d_Out_C%s-%d-%d-%d",
+	return ov::String::FormatString("I=%d,O=%s:%d:%d:%d",
 									track_id,
 									profile.GetCodec().CStr(),
 									profile.GetBitrate(),
@@ -72,9 +74,9 @@ ov::String TranscoderStreamInternal::GetIdentifiedForAudioProfile(const uint32_t
 									profile.GetChannel());
 }
 
-ov::String TranscoderStreamInternal::GetIdentifiedForDataProfile(const uint32_t track_id)
+ov::String TranscoderStreamInternal::ProfileToSerialize(const uint32_t track_id)
 {
-	return ov::String::FormatString("In_T%d_Out_Cbypass", track_id);
+	return ov::String::FormatString("I=%d,O=bypass", track_id);
 }
 
 cmn::Timebase TranscoderStreamInternal::GetDefaultTimebaseByCodecId(cmn::MediaCodecId codec_id)
@@ -159,6 +161,24 @@ std::shared_ptr<MediaTrack> TranscoderStreamInternal::CreateOutputTrack(
 		output_track->SetKeyFrameIntervalByConfig(profile.GetKeyFrameInterval());
 	}
 
+	profile.GetKeyFrameIntervalType(&is_parsed);
+	if (is_parsed == true)
+	{
+		output_track->SetKeyFrameIntervalTypeByConfig(cmn::GetKeyFrameIntervalTypeByName(profile.GetKeyFrameIntervalType()));
+	}
+
+	profile.GetSkipFrames(&is_parsed);
+	if (is_parsed == true)
+	{
+		output_track->SetSkipFramesByConfig(profile.GetSkipFrames());
+	}
+
+	profile.GetLookahead(&is_parsed);
+	if (is_parsed == true)
+	{
+		output_track->SetLookaheadByConfig(profile.GetLookahead());
+	}
+
 	output_track->SetMediaType(cmn::MediaType::Video);
 	output_track->SetId(NewTrackId());
 	output_track->SetVariantName(profile.GetName());
@@ -170,6 +190,7 @@ std::shared_ptr<MediaTrack> TranscoderStreamInternal::CreateOutputTrack(
 	if (need_bypass == true)
 	{
 		output_track->SetBypass(true);
+
 		output_track->SetCodecId(input_track->GetCodecId());
 		output_track->SetCodecModules(input_track->GetCodecModules());
 		output_track->SetCodecModuleId(input_track->GetCodecModuleId());
@@ -180,25 +201,48 @@ std::shared_ptr<MediaTrack> TranscoderStreamInternal::CreateOutputTrack(
 	else
 	{
 		output_track->SetBypass(false);
-		output_track->SetCodecId(cmn::GetCodecIdByName(profile.GetCodec()));
+
+		auto codec_id = cmn::GetCodecIdByName(profile.GetCodec());
+
+		output_track->SetCodecId(codec_id);
 		output_track->SetCodecModules(profile.GetModules());
 		output_track->SetWidth(profile.GetWidth());
 		output_track->SetHeight(profile.GetHeight());
-		output_track->SetTimeBase(GetDefaultTimebaseByCodecId(output_track->GetCodecId()));
+		output_track->SetTimeBase(GetDefaultTimebaseByCodecId(codec_id));
 		output_track->SetPreset(profile.GetPreset());
 		output_track->SetThreadCount(profile.GetThreadCount());
 		output_track->SetBFrames(profile.GetBFrames());
 		output_track->SetProfile(profile.GetProfile());
+
+		// Used when the encoding profile codec name includes the module name.
+		// ex) <Codec>h264_nvenc</Codec>
+		// ex) <Codec>h264_openh264</Codec>
+		auto module_id = cmn::GetCodecModuleIdByName(profile.GetCodec());
+		if(module_id != cmn::MediaCodecModuleId::None)
+		{
+			if(output_track->GetCodecModules().IsEmpty() == false)
+			{
+				output_track->SetCodecModules(ov::String::FormatString("%s,%s", cmn::GetStringFromCodecModuleId(module_id).CStr(), output_track->GetCodecModules().CStr()));
+			}
+			else
+			{
+				output_track->SetCodecModules(cmn::GetStringFromCodecModuleId(module_id));
+			}
+		}
 	}
 
+	//  If the framerate is not set, it is set to the same value as the input.
 	if(output_track->GetFrameRateByConfig() == 0)
 	{
-		output_track->SetFrameRateByMeasured(input_track->GetFrameRate());
+		output_track->SetFrameRateByConfig(input_track->GetFrameRateByConfig());
+		output_track->SetFrameRateByMeasured(input_track->GetFrameRateByMeasured());
 	}
 
+	//  If the bitrate is not set, it is set to the same value as the input.
 	if(output_track->GetBitrateByConfig() == 0)
 	{
-		output_track->SetBitrateByMeasured(input_track->GetBitrate());
+		output_track->SetBitrateByConfig(input_track->GetBitrateByConfig());
+		output_track->SetBitrateByMeasured(input_track->GetBitrateByMeasured());
 	}
 
 	if (cmn::IsVideoCodec(output_track->GetCodecId()) == false)
@@ -248,6 +292,7 @@ std::shared_ptr<MediaTrack> TranscoderStreamInternal::CreateOutputTrack(const st
 		output_track->GetSample().SetFormat(input_track->GetSample().GetFormat());
 		output_track->SetTimeBase(input_track->GetTimeBase());
 		output_track->SetSampleRate(input_track->GetSampleRate());
+		output_track->SetDecoderConfigurationRecord(input_track->GetDecoderConfigurationRecord());
 	}
 	else
 	{
@@ -279,10 +324,11 @@ std::shared_ptr<MediaTrack> TranscoderStreamInternal::CreateOutputTrack(const st
 		}
 	}
 
-	// Bitrate
+	//  If the bitrate is not set, it is set to the same value as the input.
 	if(output_track->GetBitrateByConfig() == 0)
 	{
-		output_track->SetBitrateByMeasured(input_track->GetBitrate());
+		output_track->SetBitrateByConfig(input_track->GetBitrateByConfig());
+		output_track->SetBitrateByMeasured(input_track->GetBitrateByMeasured());
 	}
 
 	if (cmn::IsAudioCodec(output_track->GetCodecId()) == false)
@@ -321,6 +367,12 @@ std::shared_ptr<MediaTrack> TranscoderStreamInternal::CreateOutputTrack(const st
 		output_track->SetFrameRateByConfig(profile.GetFramerate());
 	}
 
+	profile.GetSkipFrames(&is_parsed);
+	if (is_parsed == true)
+	{
+		output_track->SetSkipFramesByConfig(profile.GetSkipFrames());
+	}
+
 	output_track->SetPublicName(input_track->GetPublicName());
 	output_track->SetLanguage(input_track->GetLanguage());
 	output_track->SetVariantName(profile.GetName());
@@ -342,7 +394,7 @@ std::shared_ptr<MediaTrack> TranscoderStreamInternal::CreateOutputTrack(const st
 	output_track->SetBitrateByConfig(0);
 	output_track->SetBitrateByMeasured(1000000);
 	
-	// Set framerate of the output track
+	//  If the framerate is not set, it is set to the same value as the input.
 	if(output_track->GetFrameRateByConfig() == 0)
 	{
 		output_track->SetFrameRateByMeasured(input_track->GetFrameRate());
@@ -409,7 +461,7 @@ bool TranscoderStreamInternal::IsMatchesBypassCondition(const std::shared_ptr<Me
 	condition = if_match.GetCodec(&is_parsed).UpperCaseString();
 	if (is_parsed == true)
 	{
-		if ((condition == "EQ") && (cmn::GetCodecIdByName(profile.GetCodec().CStr()) != input_track->GetCodecId()))
+		if ((condition == "EQ") && (cmn::GetCodecIdByName(profile.GetCodec()) != input_track->GetCodecId()))
 		{
 			return false;
 		}
@@ -516,9 +568,9 @@ bool TranscoderStreamInternal::IsMatchesBypassCondition(const std::shared_ptr<Me
 	condition = if_match.GetCodec(&is_parsed).UpperCaseString();
 	if (is_parsed == true)
 	{
-		if ((condition == "EQ") && (cmn::GetCodecIdByName(profile.GetCodec().CStr()) != input_track->GetCodecId()))
+		if ((condition == "EQ") && (cmn::GetCodecIdByName(profile.GetCodec()) != input_track->GetCodecId()))
 		{
-			if (cmn::GetCodecIdByName(profile.GetCodec().CStr()) != input_track->GetCodecId())
+			if (cmn::GetCodecIdByName(profile.GetCodec()) != input_track->GetCodecId())
 			{
 				return false;
 			}
@@ -568,30 +620,58 @@ bool TranscoderStreamInternal::IsMatchesBypassCondition(const std::shared_ptr<Me
 	return (if_count > 0) ? true : false;
 }
 
-double TranscoderStreamInternal::GetEstimateFrameRate(const std::shared_ptr<MediaTrack> &input_track, MediaFrame *buffer)
+double TranscoderStreamInternal::GetProperFramerate(const std::shared_ptr<MediaTrack> &ref_track)
 {
-	double estimated_framerate = 0.0f;
+	double default_framerate = 30.0f;
 
-	if (input_track->GetFrameRate() != 0.0f)
+	if (ref_track->GetFrameRateByConfig() > 0.0f)
 	{
-		estimated_framerate = input_track->GetFrameRate();
-		logti("Framerate of the output stream is not set. set the estimated framerate from framerate of input track. %.2ffps", estimated_framerate);
+		double defined_framerate = ref_track->GetFrameRateByConfig();
+		logti("Output framerate is not set. set the estimated framerate from framerate of input track. %.2ffps",
+			  defined_framerate);
+		
+		return defined_framerate;
 	}
-	else if (input_track->GetEstimateFrameRate() != 0.0f)
+	else if (ref_track->GetFrameRateByMeasured() > 0.0f)
 	{
-		estimated_framerate = input_track->GetEstimateFrameRate();
-		logti("Framerate of the output stream is not set. set the estimated framerate from estimated framerate of input track. %.2ffps", estimated_framerate);
-	}
-	else
-	{
-		estimated_framerate = 1.0f / ((double)buffer->GetDuration() * input_track->GetTimeBase().GetExpr());
-		logti("Framerate of the output stream is not set. set the estimated framerate from decoded frame duration. %.2ffps", estimated_framerate);
+		double measured_framerate = ref_track->GetFrameRateByMeasured();
+		double recommended_framerate = MeasurementToRecommendFramerate(measured_framerate);
+
+		logti("Output framerate is not set. set the recommended framerate from measured framerate of input track. %.2f -> %.2f",
+			  measured_framerate, recommended_framerate);
+
+		return recommended_framerate;
 	}
 
-	return estimated_framerate;
+	logti("Output framerate is not set. set the default framerate. %.2ffps", default_framerate);
+
+	return default_framerate;
 }
 
-void TranscoderStreamInternal::UpdateOutputTrackPassthrough(const std::shared_ptr<MediaTrack> &output_track, MediaFrame *buffer)
+double TranscoderStreamInternal::MeasurementToRecommendFramerate(double framerate)
+{
+	double start_framerate = ::ceil(framerate);
+	if(start_framerate < 5.0f)
+		start_framerate = 5.0f;
+	
+	// It is greater than the measured frame rate and is set to a value that is divisible by an integer in the timebase(90Hz).
+	// In chunk-based protocols, the chunk length is made stable.
+	double recommend_framerate = start_framerate;
+
+	while (true)
+	{
+		if ((int)(90000 % (int64_t)recommend_framerate) == 0)
+		{
+			break;
+		}
+
+		recommend_framerate++;
+	}
+
+	return ::floor(recommend_framerate);
+}
+
+void TranscoderStreamInternal::UpdateOutputTrackPassthrough(const std::shared_ptr<MediaTrack> &output_track, std::shared_ptr<MediaFrame> buffer)
 {
 	if (output_track->GetMediaType() == cmn::MediaType::Video)
 	{
@@ -607,7 +687,7 @@ void TranscoderStreamInternal::UpdateOutputTrackPassthrough(const std::shared_pt
 	}
 }
 
-void TranscoderStreamInternal::UpdateOutputTrackTranscode(const std::shared_ptr<MediaTrack> &output_track, const std::shared_ptr<MediaTrack> &input_track, MediaFrame *buffer)
+void TranscoderStreamInternal::UpdateOutputTrackTranscode(const std::shared_ptr<MediaTrack> &output_track, const std::shared_ptr<MediaTrack> &input_track, std::shared_ptr<MediaFrame> buffer)
 {
 	if (output_track->GetMediaType() == cmn::MediaType::Video)
 	{
@@ -637,8 +717,28 @@ void TranscoderStreamInternal::UpdateOutputTrackTranscode(const std::shared_ptr<
 		// Set framerate of the output track
 		if (output_track->GetFrameRate() == 0.0f)
 		{
-			auto estimated_framerate = GetEstimateFrameRate(input_track, buffer);
-			output_track->SetEstimateFrameRate(estimated_framerate);
+			auto framerate = GetProperFramerate(input_track);
+			output_track->SetEstimateFrameRate(framerate);
+		}
+
+		// To be compatible with all hardware. The encoding resolution must be a multiple of 4
+		// In particular, Xilinx Media Accelerator must have a resolution specified in multiples of 4.
+		if (output_track->GetWidth() % 4 != 0)
+		{
+			int32_t new_width = (output_track->GetWidth() / 4 + 1) * 4;
+
+			logtd("The width of the output track is not a multiple of 4. change the width to %d -> %d", output_track->GetWidth(), new_width);
+
+			output_track->SetWidth(new_width);
+		}
+
+		if (output_track->GetHeight() % 4 != 0)
+		{
+			int32_t new_height = (output_track->GetHeight() / 4 + 1) * 4;
+
+			logtd("The height of the output track is not a multiple of 4. change the height to %d -> %d", output_track->GetHeight(), new_height);
+
+			output_track->SetHeight(new_height);
 		}
 	}
 	else if (output_track->GetMediaType() == cmn::MediaType::Audio)
@@ -652,6 +752,120 @@ void TranscoderStreamInternal::UpdateOutputTrackTranscode(const std::shared_ptr<
 		if (output_track->GetChannel().GetLayout() == cmn::AudioChannel::Layout::LayoutUnknown)
 		{
 			output_track->SetChannel(buffer->GetChannels());
+		}
+	}
+}
+
+bool TranscoderStreamInternal::StoreInputTrackSnapshot(std::shared_ptr<info::Stream> stream)
+{
+	_input_track_snapshot.clear();
+	
+	for (auto &[track_id, track] : stream->GetTracks())
+	{
+		auto clone = track->Clone();
+		_input_track_snapshot[track_id] = clone;
+	}	
+
+	return true;
+}
+
+std::map<int32_t, std::shared_ptr<MediaTrack>>& TranscoderStreamInternal::GetInputTrackSnapshot()
+{
+	return _input_track_snapshot;
+}
+
+bool TranscoderStreamInternal::IsEqualCountAndMediaTypeOfMediaTracks(std::map<int32_t, std::shared_ptr<MediaTrack>> a, std::map<int32_t, std::shared_ptr<MediaTrack>> b)
+{
+	if (a.size() != b.size())
+	{
+		return false;
+	}
+
+	for (auto &[track_id, track] : a)
+	{
+		if (b.find(track_id) == b.end())
+		{
+			return false;
+		}
+
+		auto track_b = b[track_id];
+
+		if(track->GetMediaType() != track_b->GetMediaType())
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
+bool TranscoderStreamInternal::IsKeyframeOnlyDecodable(const std::map<ov::String, std::shared_ptr<info::Stream>> &streams)
+{
+	uint32_t video, video_bypass, audio, audio_bypass, image, data;
+
+	GetCountByEncodingType(streams, video, video_bypass, audio, audio_bypass, image, data);
+
+	// logtd("Video:%u, Video(Bypass):%u, Audio:%u, Audio(Bypass):%u, Image:%u, Data:%u",
+	// 	  video, video_bypass, audio, audio_bypass, image, data);
+
+	if (video == 0 && image > 0)
+	{
+		return true;
+	}
+
+	return false;
+}
+
+void TranscoderStreamInternal::GetCountByEncodingType(
+	const std::map<ov::String, std::shared_ptr<info::Stream>> &streams,
+	uint32_t &video, uint32_t &video_bypass, uint32_t &audio, uint32_t &audio_bypass, uint32_t &image, uint32_t &data)
+{
+	video = 0;
+	video_bypass = 0;
+	audio = 0;
+	audio_bypass = 0;
+	image = 0;
+	data = 0;
+
+	for (auto &[stream_name, stream] : streams)
+	{
+		for (auto &[track_id, track] : stream->GetTracks())
+		{
+			switch (track->GetMediaType())
+			{
+				case cmn::MediaType::Video:
+					if (cmn::IsImageCodec(track->GetCodecId()) == true)
+					{
+						image++;
+					}
+					else if (cmn::IsVideoCodec(track->GetCodecId()) == true)
+					{
+						if (track->IsBypass() == true)
+						{
+							video_bypass++;
+						}
+						else
+						{
+							video++;
+						}
+					}
+					break;
+				case cmn::MediaType::Audio:
+					if (track->IsBypass() == true)
+					{
+						audio_bypass++;
+					}
+					else
+					{
+						audio++;
+					}
+					break;
+				case cmn::MediaType::Data:
+					data++;
+					break;
+				default:
+					break;
+			}
 		}
 	}
 }

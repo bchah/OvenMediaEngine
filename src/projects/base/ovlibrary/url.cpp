@@ -18,7 +18,7 @@ namespace ov
 		// <scheme>://[id:password@]
 		R"((?<scheme>.*):\/\/((?<id>.+):(?<password>.+)@)?)"
 		// <host>
-		R"((?<host>((\[[a-zA-Z0-9:]+\])|([^:\/]+))))"
+		R"((?<host>((\[[a-zA-Z0-9:]+\])|([^:\/?]+))))"
 		// [:<port>]
 		R"((:(?<port>[0-9]+))?)"
 		// [/<path/to/resource>]
@@ -118,58 +118,123 @@ namespace ov
 		return result_string;
 	}
 
-	std::shared_ptr<Url> Url::Parse(const ov::String &url)
+	bool Url::SetSource(const ov::String &value)
 	{
-		auto object = std::make_shared<Url>();
-		std::string url_string = url.CStr();
+		_source = value;
+		return ParseFromSource();
+	}
+	bool Url::SetScheme(const ov::String &value)
+	{
+		_scheme = value;
+		return UpdateSource();
+	}
+	bool Url::SetHost(const ov::String &value)
+	{
+		_host = value;
+		return UpdateSource();
+	}
+	bool Url::SetPort(uint32_t port)
+	{
+		_port = port;
+		return UpdateSource();
+	}
 
-		object->_source = url;
+	bool Url::SetPath(const ov::String &path)
+	{
+		_path = path;
+		return UpdatePathComponentsFromPath() && UpdateSource();
+	}
 
-		auto matches = g_url_parse_regex.Matches(url);
+	bool Url::SetApp(const ov::String &value)
+	{
+		_app = SetPathComponent(1, value);
+		return UpdatePathFromComponents() && UpdateSource();
+	}
+
+	bool Url::SetStream(const ov::String &value)
+	{
+		_stream = SetPathComponent(2, value);
+		return UpdatePathFromComponents() && UpdateSource();
+	}
+
+	bool Url::SetFile(const ov::String &value)
+	{
+		_file = SetPathComponent(3, value);
+		return UpdatePathFromComponents() && UpdateSource();
+	}
+
+	bool Url::SetId(const ov::String &value)
+	{
+		_id = value;
+		return UpdateSource();
+	}
+
+	bool Url::SetPassword(const ov::String &value)
+	{
+		_password = value;
+		return UpdateSource();
+	}
+
+	bool Url::ParseFromSource()
+	{
+		auto matches = g_url_parse_regex.Matches(_source);
 
 		if (matches.GetError() != nullptr)
 		{
-			return nullptr;
+			// Invalid URL
+			_scheme = "";
+			_id = "";
+			_password = "";
+			_host = "";
+			_port = 0;
+			_path = "";
+			_path_components.clear();
+			_query_string = "";
+			_has_query_string = false;
+			_query_parsed = false;
+
+			_app = "";
+			_stream = "";
+			_file = "";
+
+			return false;
 		}
 
 		auto group_list = matches.GetNamedGroupList();
 
-		object->_scheme = group_list["scheme"].GetValue();
-		object->_id = group_list["id"].GetValue();
-		object->_password = group_list["password"].GetValue();
-		object->_host = group_list["host"].GetValue();
-		object->_port = ov::Converter::ToUInt32(group_list["port"].GetValue());
-		object->_path = group_list["path"].GetValue();
-		object->_query_string = group_list["qs"].GetValue();
-		object->_has_query_string = (object->_query_string.IsEmpty() == false);
-
-		// split <path> to /<app>/<stream>/<file> (4 tokens)
-		auto tokens = object->_path.Split("/");
-
-		switch (tokens.size())
+		_scheme = group_list["scheme"].GetValue();
+		_id = group_list["id"].GetValue();
+		_password = group_list["password"].GetValue();
+		_host = group_list["host"].GetValue();
+		_port = ov::Converter::ToUInt32(group_list["port"].GetValue());
+		_path = group_list["path"].GetValue();
+		// _path_components, _app, _stream, _file will be set in UpdatePathComponentsFromPath()
+		if (UpdatePathComponentsFromPath() == false)
 		{
-			default:
-			case 4:
-				object->_file = tokens[3];
-				[[fallthrough]];
-			case 3:
-				object->_stream = tokens[2];
-				[[fallthrough]];
-			case 2:
-				object->_app = tokens[1];
-				[[fallthrough]];
-			case 1:
-			case 0:
-				// Nothing to do
-				break;
+			return false;
+		}
+		_query_string = group_list["qs"].GetValue();
+		_has_query_string = (_query_string.IsEmpty() == false);
+		_query_parsed = false;
+
+		return true;
+	}
+
+	std::shared_ptr<Url> Url::Parse(const ov::String &url)
+	{
+		auto object = std::make_shared<Url>();
+
+		if (object->SetSource(url))
+		{
+			return object;
 		}
 
-		return object;
+		return nullptr;
 	}
 
 	bool Url::PushBackQueryKey(const ov::String &key)
 	{
-		if (_has_query_string == true)
+		if (_has_query_string)
 		{
 			_query_string.Append("&");
 		}
@@ -183,7 +248,7 @@ namespace ov
 
 	bool Url::PushBackQueryKey(const ov::String &key, const ov::String &value)
 	{
-		if (_has_query_string == true)
+		if (_has_query_string)
 		{
 			_query_string.Append("&");
 		}
@@ -195,10 +260,32 @@ namespace ov
 		return true;
 	}
 
+	bool Url::AppendQueryString(const ov::String &query_string)
+	{
+		if (_has_query_string)
+		{
+			_query_string.Append("&");
+		}
+
+		if (query_string.HasPrefix('?') || query_string.HasPrefix('&'))
+		{
+			_query_string.Append(query_string.Substring(1));
+		}
+		else
+		{
+			_query_string.Append(query_string);
+		}
+
+		_has_query_string = true;
+		_query_parsed = false;
+
+		return true;
+	}
+
 	// Keep the order of queries.
 	bool Url::RemoveQueryKey(const ov::String &remove_key)
 	{
-		if ((_has_query_string == false))
+		if (_has_query_string == false)
 		{
 			return false;
 		}
@@ -244,6 +331,60 @@ namespace ov
 		return true;
 	}
 
+	const ov::String &Url::SetPathComponent(size_t index, const ov::String &value)
+	{
+		if (_path_components.size() <= index)
+		{
+			_path_components.resize(index + 1);
+		}
+
+		_path_components[index] = value;
+
+		return value;
+	}
+
+	bool Url::UpdateSource()
+	{
+		_source = ToUrlString();
+		return true;
+	}
+
+	bool Url::UpdatePathFromComponents()
+	{
+		_path = ov::String::Join(_path_components, "/");
+		return true;
+	}
+
+	bool Url::UpdatePathComponentsFromPath()
+	{
+		// split <path> to /<app>/<stream>[/<file>[/<remaining>]] (Up to 5 tokens)
+		_path_components = _path.Split("/");
+
+		_app = "";
+		_stream = "";
+		_file = "";
+
+		switch (_path_components.size())
+		{
+			default:
+			case 4:
+				_file = _path_components[3];
+				[[fallthrough]];
+			case 3:
+				_stream = _path_components[2];
+				[[fallthrough]];
+			case 2:
+				_app = _path_components[1];
+				[[fallthrough]];
+			case 1:
+			case 0:
+				// Nothing to do
+				break;
+		}
+
+		return true;
+	}
+
 	void Url::ParseQueryIfNeeded() const
 	{
 		if ((_has_query_string == false) || _query_parsed)
@@ -284,6 +425,75 @@ namespace ov
 		}
 	}
 
+	bool Url::HasQueryString() const
+	{
+		return _has_query_string;
+	}
+
+	const ov::String &Url::Query() const
+	{
+		ParseQueryIfNeeded();
+		return _query_string;
+	}
+
+	const bool Url::HasQueryKey(ov::String key) const
+	{
+		ParseQueryIfNeeded();
+		if (_query_map.find(key) == _query_map.end())
+		{
+			return false;
+		}
+
+		return true;
+	}
+
+	const ov::String Url::GetQueryValue(ov::String key) const
+	{
+		if (HasQueryKey(key) == false)
+		{
+			return "";
+		}
+
+		return Decode(_query_map[key]);
+	}
+
+	const std::map<ov::String, ov::String> &Url::QueryMap() const
+	{
+		ParseQueryIfNeeded();
+		return _query_map;
+	}
+
+	Url &Url::operator=(const Url &other) noexcept
+	{
+		_source = other._source;
+		_scheme = other._scheme;
+		_id = other._id;
+		_password = other._password;
+		_host = other._host;
+		_port = other._port;
+		_path = other._path;
+		_path_components = other._path_components;
+		_has_query_string = other._has_query_string;
+		_query_string = other._query_string;
+		_query_parsed = other._query_parsed;
+		_query_map = other._query_map;
+		_app = other._app;
+		_stream = other._stream;
+		_file = other._file;
+
+		return *this;
+	}
+
+	Url::Url(const Url &other)
+	{
+		operator=(other);
+	}
+
+	std::shared_ptr<Url> Url::Clone() const
+	{
+		return std::make_shared<Url>(*this);
+	}
+
 	void Url::Print() const
 	{
 		logi("URL Parser", "%s %s %d %s %s %s %s",
@@ -293,25 +503,48 @@ namespace ov
 
 	ov::String Url::ToUrlString(bool include_query_string) const
 	{
-		return ov::String::FormatString(
-			"%s://%s%s%s%s%s",
-			_scheme.CStr(),
-			_host.CStr(), (_port > 0) ? ov::String::FormatString(":%d", _port).CStr() : "",
-			_path.CStr(), ((include_query_string == false) || _query_string.IsEmpty()) ? "" : "?", include_query_string ? _query_string.CStr() : "");
+		ov::String url;
+
+		url.AppendFormat("%s://", _scheme.CStr());
+
+		if (_id.IsEmpty() == false)
+		{
+			url.Append(_id.CStr());
+
+			if (_password.IsEmpty())
+			{
+				url.Append('@');
+			}
+		}
+
+		if (_password.IsEmpty() == false)
+		{
+			url.AppendFormat(":%s@", _password.CStr());
+		}
+
+		url.Append(_host.CStr());
+		if (_port > 0)
+		{
+			url.AppendFormat(":%d", _port);
+		}
+
+		url.Append(_path);
+
+		if (include_query_string && (_query_string.IsEmpty() == false))
+		{
+			url.Append("?");
+			url.Append(_query_string);
+		}
+
+		return url;
 	}
 
 	ov::String Url::ToString() const
 	{
-		ov::String description;
+		auto url = ToUrlString();
 
-		description.AppendFormat(
-			"%s://%s%s%s%s%s%s (app: %s, stream: %s, file: %s)",
-			_scheme.CStr(),
-			_id.IsEmpty() ? "" : ov::String::FormatString("%s:%s@", _id.CStr(), _password.CStr()).CStr(),
-			_host.CStr(), (_port > 0) ? ov::String::FormatString(":%d", _port).CStr() : "",
-			_path.CStr(), _query_string.IsEmpty() ? "" : "?", _query_string.CStr(),
-			_app.CStr(), _stream.CStr(), _file.CStr());
+		url.AppendFormat(" (app: %s, stream: %s, file: %s)", _app.CStr(), _stream.CStr(), _file.CStr());
 
-		return description;
+		return url;
 	}
 }  // namespace ov

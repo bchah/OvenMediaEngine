@@ -155,6 +155,7 @@ bool RtpPacket::Parse(const std::shared_ptr<const ov::Data> &data)
 
 		uint16_t extension_profile = ByteReader<uint16_t>::ReadBigEndian(&buffer[_payload_offset]);
 		_extension_size = ByteReader<uint16_t>::ReadBigEndian(&buffer[_payload_offset + 2]) * 4;
+
 		if(extension_offset + _extension_size > buffer_size)
 		{
 			return false;
@@ -192,7 +193,7 @@ bool RtpPacket::Parse(const std::shared_ptr<const ov::Data> &data)
 				len = buffer[extension_offset++];
 			}
 
-			_extensions.emplace(id, ov::Data(&buffer[extension_offset], len, true));
+			_extensions.emplace(id, ov::Data(&buffer[extension_offset], len, false));
 			extension_offset += len;
 		}
 	}
@@ -401,7 +402,7 @@ void RtpPacket::SetExtensions(const RtpHeaderExtensions& extensions)
 
 	// Write Extensions
 	auto extensions_map = extensions.GetMap();
-	for(const auto [id, extension] : extensions_map)
+	for(const auto &[id, extension] : extensions_map)
 	{
 		_extension_buffer_offset[id] = offset;
 

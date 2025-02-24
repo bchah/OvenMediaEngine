@@ -13,6 +13,9 @@
 #include <base/ovlibrary/delay_queue.h>
 #include <hiredis/hiredis.h>
 
+// redis key expire time (sec)
+#define ORIGIN_MAP_STORE_KEY_EXPIRE_TIME 10
+
 // If Origins-Edges cluster uses OriginMapStore, app/stream must be unique in the cluster.
 class OriginMapClient
 {
@@ -35,6 +38,7 @@ private:
 	bool ConnectRedis();
 
 	bool NofifyStreamsAlive();
+	bool RetryRegister();
 
 	ov::String _redis_ip;
 	uint16_t _redis_port;
@@ -43,6 +47,7 @@ private:
 	ov::DelayQueue _update_timer{"OMapC"};
 
 	std::map<ov::String, ov::String> _origin_map;
+	std::map<ov::String, ov::String> _origin_map_candidates;
 	std::mutex _origin_map_mutex;
 
 	redisContext *_redis_context = nullptr;

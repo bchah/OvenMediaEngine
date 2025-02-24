@@ -9,8 +9,8 @@
 
 #include "bmff_packager.h"
 #include "bmff_private.h"
-#include <modules/id3v2/id3v2.h>
-#include <modules/id3v2/frames/id3v2_frames.h>
+#include <modules/data_format/id3v2/id3v2.h>
+#include <modules/data_format/id3v2/frames/id3v2_frames.h>
 namespace bmff
 {
 	Packager::Packager(const std::shared_ptr<const MediaTrack> &media_track, const std::shared_ptr<const MediaTrack> &data_track, const CencProperty &cenc_property)
@@ -22,7 +22,7 @@ namespace bmff
 		{
 			_cenc_property.crypt_bytes_block = 0;
 			_cenc_property.skip_bytes_block = 0;
-		}		
+		}
 	}
 
 	// Get track 
@@ -218,7 +218,7 @@ namespace bmff
 
 		// track_ID is an integer that uniquely identifies this track over the entire life‐time of this presentation. Track IDs are never re-used and cannot be zero.
 		// track_ID + 1 because zero track ID is valid for OME
-		stream.WriteBE32(GetMediaTrack()->GetId()+1); // track_ID
+		stream.WriteBE32(1); // track_ID
 		stream.WriteBE32(0); // reserved
 		stream.WriteBE32(0); // duration
 		stream.WriteBE32(0); // reserved
@@ -1101,7 +1101,7 @@ namespace bmff
 		ov::ByteStream stream(4096);
 
 		// uint(16) ES_ID;
-		stream.WriteBE16(GetMediaTrack()->GetId()+1);
+		stream.WriteBE16(1);
 		// bit(1) streamDependenceFlag; disabled
 		// bit(1) URL_Flag; disabled
 		// bit(1) OCRstreamFlag; disabled
@@ -1405,7 +1405,7 @@ namespace bmff
 		ov::ByteStream stream(24);
 
 		// unsigned int(32) track_ID;
-		stream.WriteBE32(GetMediaTrack()->GetId()+1);
+		stream.WriteBE32(1);
 
 		// unsigned int(32) default_sample_description_index;
 		stream.WriteBE32(1);
@@ -1414,7 +1414,7 @@ namespace bmff
 		stream.WriteBE32(0);
 
 		// unsigned int(32) default_sample_size;
-		stream.WriteBE32(1);
+		stream.WriteBE32(0);
 
 		// unsigned int(32) default_sample_flags;
 		// bit(4) reserved = 0;
@@ -1622,7 +1622,7 @@ namespace bmff
 			return false;
 		}
 
-		if (_cenc_property.scheme == CencProtectScheme::Cbcs)
+		if (_cenc_property.scheme != CencProtectScheme::None)
 		{
 			if (WriteSaizBox(stream, samples) == false)
 			{
@@ -1665,21 +1665,21 @@ namespace bmff
 		ov::ByteStream stream(64);
 
 		// unsigned int(32) track_ID;
-		stream.WriteBE32(GetMediaTrack()->GetId()+1);
-
-		// unsigned int(64) base_data_offset;
-
-		// unsigned int(32) sample_description_index;
 		stream.WriteBE32(1);
 
-		// unsigned int(32) default_sample_duration;
-		stream.WriteBE32(33);
+		// // unsigned int(64) base_data_offset;
 
-		// unsigned int(32) default_sample_size;
-		stream.WriteBE32(0);
+		// // unsigned int(32) sample_description_index;
+		// stream.WriteBE32(1);
 
-		// unsigned int(32) default_sample_flags;
-		stream.WriteBE32(0);
+		// // unsigned int(32) default_sample_duration;
+		// stream.WriteBE32(33);
+
+		// // unsigned int(32) default_sample_size;
+		// stream.WriteBE32(0);
+
+		// // unsigned int(32) default_sample_flags;
+		// stream.WriteBE32(0);
 
 		// tf_flags
 		// 0x000001 base-data-offset-present:
@@ -1690,7 +1690,7 @@ namespace bmff
 		// 0x010000 duration-is-empty:
 		// 0x020000 default‐base‐is‐moof: if base‐data‐offset‐present is 1, this flag is ignored. If base-data-offset-present is zero, this indicates that the base-data-offset for this track fragment is the position of the first byte of the enclosing Movie Fragment Box. Support for the default‐base‐is‐moof flag is required under the ‘iso5’ brand, and it shall not be used in brands or compatible brands earlier than iso5.
 		
-		return WriteFullBox(container_stream, "tfhd", *stream.GetData(), 0, 0x2 | 0x8 | 0x10 | 0x20 |0x020000);
+		return WriteFullBox(container_stream, "tfhd", *stream.GetData(), 0, 0); //0x2 | 0x8 | 0x10 | 0x20 |0x020000);
 	}
 
 	bool Packager::WriteTfdtBox(ov::ByteStream &container_stream, const std::shared_ptr<const Samples> &samples)
@@ -2024,8 +2024,7 @@ namespace bmff
 		stream.Write8(1);
 
 		// unsigned int(8) default_Per_Sample_IV_Size;
-		// We don't support default_Per_Sample_IV_Size yet
-		stream.Write8(0);
+		stream.Write8(_cenc_property.per_sample_iv_size);
 
 		// unsigned int(8)[16] default_KID;
 		if (_cenc_property.key_id->GetLength() != 16)
@@ -2036,17 +2035,20 @@ namespace bmff
 		}
 		stream.Write(_cenc_property.key_id->GetData(), _cenc_property.key_id->GetLength());
 
-		// unsigned int(8) default_constant_IV_size;
-		stream.Write8(16);
-		if (_cenc_property.iv->GetLength() != 16)
+		if (_cenc_property.per_sample_iv_size == 0)
 		{
-			// Assert
-			OV_ASSERT2(false);
-			return false;
-		}
+			// unsigned int(8) default_constant_IV_size;
+			stream.Write8(16);
+			if (_cenc_property.iv->GetLength() != 16)
+			{
+				// Assert
+				OV_ASSERT2(false);
+				return false;
+			}
 
-		// unsigned int(8)[default_constant_IV_size] default_constant_IV;
-		stream.Write(_cenc_property.iv->GetData(), _cenc_property.iv->GetLength());
+			// unsigned int(8)[default_constant_IV_size] default_constant_IV;
+			stream.Write(_cenc_property.iv->GetData(), _cenc_property.iv->GetLength());
+		}
 
 		return WriteFullBox(container_stream, "tenc", *stream.GetData(), version, 0);
 	}
@@ -2176,9 +2178,6 @@ namespace bmff
 		stream.WriteBE32(samples->GetTotalCount());
 
 		_senc_data_offset_in_senc = stream.GetLength() + BMFF_FULL_BOX_HEADER_SIZE;
-		// version : 0
-		// unsigned int(Per_Sample_IV_Size * 8) InitializationVector;
-		// We don't support Per_Sample_IV_Size
 
 		uint32_t flag = 0x000000;
 
@@ -2189,6 +2188,17 @@ namespace bmff
 
 		for (const auto &sample : samples->GetList())
 		{
+			// InitializationVector
+			if (sample._sai.per_sample_iv != nullptr)
+			{
+				stream.Write(sample._sai.per_sample_iv->GetData(), sample._sai.per_sample_iv->GetLength());
+			}
+
+			if (sample._sai._sub_samples.size() == 0)
+			{
+				continue;
+			}
+
 			// unsigned int(16) subsample_count;
 			stream.WriteBE16(sample._sai._sub_samples.size());
 

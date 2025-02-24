@@ -19,15 +19,17 @@
 #include "modules/dtls_srtp/dtls_transport.h"
 #include "modules/rtp_rtcp/rtp_depacketizing_manager.h"
 
+#include "modules/bitstream/h264/h264_bitstream_parser.h"
+
 namespace pvd
 {
-	class WebRTCStream : public pvd::PushStream, public RtpRtcpInterface, public ov::Node
+	class WebRTCStream final : public pvd::PushStream, public RtpRtcpInterface, public ov::Node
 	{
 	public:
 		static std::shared_ptr<WebRTCStream> Create(StreamSourceType source_type, ov::String stream_name,
 													const std::shared_ptr<PushProvider> &provider,
 													const std::shared_ptr<const SessionDescription> &local_sdp,
-													const std::shared_ptr<const SessionDescription> &peer_sdp,
+													const std::shared_ptr<const SessionDescription> &remote_sdp,
 													const std::shared_ptr<Certificate> &certificate, 
 													const std::shared_ptr<IcePort> &ice_port,
 													session_id_t ice_session_id);
@@ -35,7 +37,7 @@ namespace pvd
 		explicit WebRTCStream(StreamSourceType source_type, ov::String stream_name, 
 								const std::shared_ptr<PushProvider> &provider,
 								const std::shared_ptr<const SessionDescription> &local_sdp,
-								const std::shared_ptr<const SessionDescription> &peer_sdp,
+								const std::shared_ptr<const SessionDescription> &remote_sdp,
 								const std::shared_ptr<Certificate> &certificate, 
 								const std::shared_ptr<IcePort> &ice_port,
 								session_id_t ice_session_id);
@@ -76,12 +78,17 @@ namespace pvd
 		bool AddDepacketizer(uint8_t payload_type, RtpDepacketizingManager::SupportedDepacketizerType codec_id);
 		std::shared_ptr<RtpDepacketizingManager> GetDepacketizer(uint8_t payload_type);
 
+		void OnFrame(const std::shared_ptr<MediaTrack> &track, const std::shared_ptr<MediaPacket> &media_packet);
+
 		ov::StopWatch _fir_timer;
 
 		ov::String _session_key;
 
 		std::shared_ptr<const SessionDescription> _local_sdp;
-		std::shared_ptr<const SessionDescription> _peer_sdp;
+		std::shared_ptr<const SessionDescription> _remote_sdp;
+		std::shared_ptr<const SessionDescription> _offer_sdp;
+		std::shared_ptr<const SessionDescription> _answer_sdp;
+
 		std::shared_ptr<IcePort> _ice_port;
 		std::shared_ptr<Certificate> _certificate;
 
@@ -91,6 +98,12 @@ namespace pvd
 
 		bool								_rtx_enabled = false;
 		std::shared_mutex					_start_stop_lock;
+
+		// CompositionTime extmap
+		bool _cts_extmap_enabled = false;
+		uint8_t _cts_extmap_id = 0;
+		std::map<int64_t, std::shared_ptr<MediaPacket>> _dts_ordered_frame_buffer;
+		H264BitstreamParser _h264_bitstream_parser;
 
 		// Payload type, Depacketizer
 		std::map<uint8_t, std::shared_ptr<RtpDepacketizingManager>> _depacketizers;

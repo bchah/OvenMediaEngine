@@ -16,55 +16,10 @@ AccessController::AccessController(PublisherType publisher_type, const cfg::Serv
 
 }
 
-AccessController::RequestInfo::RequestInfo(const std::shared_ptr<const ov::Url> &request_url, const std::shared_ptr<ov::SocketAddress> &client_address)
-	: _request_url(request_url), _client_address(client_address), _user_agent("")
-{
-
-}
-
-AccessController::RequestInfo::RequestInfo(const std::shared_ptr<const ov::Url> &request_url, const std::shared_ptr<ov::SocketAddress> &client_address, const ov::String &user_agent)
-	: _request_url(request_url), _client_address(client_address), _user_agent(user_agent)
-{
-
-}
-
-AccessController::RequestInfo::RequestInfo(const std::shared_ptr<const ov::Url> &request_url, const std::shared_ptr<ov::SocketAddress> &client_address, const std::shared_ptr<const ov::Url> &new_url)
-	: _request_url(request_url), _client_address(client_address), _new_url(new_url)
-{
-
-}
-
-AccessController::RequestInfo::RequestInfo(const std::shared_ptr<const ov::Url> &request_url, const std::shared_ptr<ov::SocketAddress> &client_address, const std::shared_ptr<const ov::Url> &new_url, const ov::String &user_agent)
-	: _request_url(request_url), _client_address(client_address), _new_url(new_url), _user_agent(user_agent)
-{
-
-}
-
-std::shared_ptr<const ov::Url> AccessController::RequestInfo::GetRequestUrl() const
-{
-	return _request_url;
-}
-
-std::shared_ptr<const ov::Url> AccessController::RequestInfo::GetNewUrl() const
-{
-	return _new_url;
-}
-
-std::shared_ptr<ov::SocketAddress> AccessController::RequestInfo::GetClientAddress() const
-{
-	return _client_address;
-}
-
-const ov::String &AccessController::RequestInfo::GetUserAgent() const
-{
-	return _user_agent;
-}
-
-
-std::tuple<AccessController::VerificationResult, std::shared_ptr<const AdmissionWebhooks>> AccessController::SendCloseWebhooks(const std::shared_ptr<const AccessController::RequestInfo> &request_info)
+std::tuple<AccessController::VerificationResult, std::shared_ptr<const AdmissionWebhooks>> AccessController::SendCloseWebhooks(const std::shared_ptr<const ac::RequestInfo> &request_info)
 {
 	auto orchestrator = ocst::Orchestrator::GetInstance();
-	auto request_url = request_info->GetRequestUrl();
+	auto request_url = request_info->GetRequestedUrl();
 	auto client_address = request_info->GetClientAddress();
 
 	auto vhost_name = orchestrator->GetVhostNameFromDomain(request_url->Host());
@@ -123,19 +78,11 @@ std::tuple<AccessController::VerificationResult, std::shared_ptr<const Admission
 		std::shared_ptr<AdmissionWebhooks> admission_webhooks;
 		if(_provider_type != ProviderType::Unknown)
 		{
-			auto webhooks_request_info = std::make_shared<AdmissionWebhooks::RequestInfo>(request_url, request_info->GetNewUrl());
-			auto client_info = std::make_shared<AdmissionWebhooks::ClientInfo>(client_address, request_info->GetUserAgent());
-
-			admission_webhooks = AdmissionWebhooks::Query(
-				_provider_type, control_server_url, timeout_msec, secret_key, webhooks_request_info, client_info, AdmissionWebhooks::Status::Code::CLOSING);
+			admission_webhooks = AdmissionWebhooks::Query(_provider_type, control_server_url, timeout_msec, secret_key, request_info, AdmissionWebhooks::Status::Code::CLOSING);
 		}
 		else if(_publisher_type != PublisherType::Unknown)
 		{
-			auto webhooks_request_info = std::make_shared<AdmissionWebhooks::RequestInfo>(request_url, request_info->GetNewUrl());
-			auto client_info = std::make_shared<AdmissionWebhooks::ClientInfo>(client_address, request_info->GetUserAgent());
-
-			admission_webhooks = AdmissionWebhooks::Query(
-				_publisher_type, control_server_url, timeout_msec, secret_key, webhooks_request_info, client_info, AdmissionWebhooks::Status::Code::CLOSING);
+			admission_webhooks = AdmissionWebhooks::Query(_publisher_type, control_server_url, timeout_msec, secret_key, request_info, AdmissionWebhooks::Status::Code::CLOSING);
 		}
 		else
 		{
@@ -150,9 +97,8 @@ std::tuple<AccessController::VerificationResult, std::shared_ptr<const Admission
 			return {AccessController::VerificationResult::Error, nullptr};
 		}
 
-		logti("AdmissionWebhooks queried %s whether client %s could access %s. (Result : %s Elapsed : %u ms)",
-			control_server_url_address.CStr(), client_address->ToString(false).CStr(), request_url->ToUrlString().CStr(),
-			admission_webhooks->GetErrCode()==AdmissionWebhooks::ErrCode::ALLOWED?"Allow":"Reject", admission_webhooks->GetElapsedTime());
+		logti("AdmissionWebhooks notified %s that client %s has closed the connection to %s. (Response : %s Elapsed : %u ms)",
+			control_server_url_address.CStr(), client_address->ToString(false).CStr(), request_url->ToUrlString().CStr(), admission_webhooks->GetErrCode()==AdmissionWebhooks::ErrCode::ALLOWED?"Allow":"Reject", admission_webhooks->GetElapsedTime());
 
 		if(admission_webhooks->GetErrCode() != AdmissionWebhooks::ErrCode::ALLOWED)
 		{
@@ -163,14 +109,14 @@ std::tuple<AccessController::VerificationResult, std::shared_ptr<const Admission
 	}
 
 	// Probably this doesn't happen
-	logte("Could not find VirtualHost (%s)", vhost_name);
+	logte("Could not find VirtualHost (%s)", vhost_name.CStr());
 	return {AccessController::VerificationResult::Error, nullptr};
 }
 
-std::tuple<AccessController::VerificationResult, std::shared_ptr<const AdmissionWebhooks>> AccessController::VerifyByWebhooks(const std::shared_ptr<const AccessController::RequestInfo> &request_info)
+std::tuple<AccessController::VerificationResult, std::shared_ptr<const AdmissionWebhooks>> AccessController::VerifyByWebhooks(const std::shared_ptr<const ac::RequestInfo> &request_info)
 {
 	auto orchestrator = ocst::Orchestrator::GetInstance();
-	auto request_url = request_info->GetRequestUrl();
+	auto request_url = request_info->GetRequestedUrl();
 	auto client_address = request_info->GetClientAddress();
 
 	auto vhost_name = orchestrator->GetVhostNameFromDomain(request_url->Host());
@@ -229,17 +175,11 @@ std::tuple<AccessController::VerificationResult, std::shared_ptr<const Admission
 		std::shared_ptr<AdmissionWebhooks> admission_webhooks;
 		if(_provider_type != ProviderType::Unknown)
 		{
-			auto webhooks_request_info = std::make_shared<AdmissionWebhooks::RequestInfo>(request_url);
-			auto client_info = std::make_shared<AdmissionWebhooks::ClientInfo>(client_address, request_info->GetUserAgent());
-
-			admission_webhooks = AdmissionWebhooks::Query(_provider_type, control_server_url, timeout_msec, secret_key, webhooks_request_info, client_info);
+			admission_webhooks = AdmissionWebhooks::Query(_provider_type, control_server_url, timeout_msec, secret_key, request_info);
 		}
 		else if(_publisher_type != PublisherType::Unknown)
 		{
-			auto webhooks_request_info = std::make_shared<AdmissionWebhooks::RequestInfo>(request_url);
-			auto client_info = std::make_shared<AdmissionWebhooks::ClientInfo>(client_address, request_info->GetUserAgent());
-
-			admission_webhooks = AdmissionWebhooks::Query(_publisher_type, control_server_url, timeout_msec, secret_key, webhooks_request_info, client_info);
+			admission_webhooks = AdmissionWebhooks::Query(_publisher_type, control_server_url, timeout_msec, secret_key, request_info);
 		}
 		else
 		{
@@ -266,13 +206,14 @@ std::tuple<AccessController::VerificationResult, std::shared_ptr<const Admission
 	}
 
 	// Probably this doesn't happen
-	logte("Could not find VirtualHost (%s)", vhost_name);
+	logte("Could not find VirtualHost (%s)", vhost_name.CStr());
 	return {AccessController::VerificationResult::Error, nullptr};
 }
 
-std::tuple<AccessController::VerificationResult, std::shared_ptr<const SignedPolicy>> AccessController::VerifyBySignedPolicy(const std::shared_ptr<const ov::Url> &request_url, const std::shared_ptr<ov::SocketAddress> &client_address)
+std::tuple<AccessController::VerificationResult, std::shared_ptr<const SignedPolicy>> AccessController::VerifyBySignedPolicy(const std::shared_ptr<const ac::RequestInfo> &request_info)
 {
 	auto orchestrator = ocst::Orchestrator::GetInstance();
+	auto request_url = request_info->GetRequestedUrl();
 	auto vhost_name = orchestrator->GetVhostNameFromDomain(request_url->Host());
 
 	if (vhost_name.IsEmpty())
@@ -319,7 +260,7 @@ std::tuple<AccessController::VerificationResult, std::shared_ptr<const SignedPol
 		auto signature_query_key_name = signed_policy_config.GetSignatureQueryKeyName();
 		auto secret_key = signed_policy_config.GetSecretKey();
 
-		auto signed_policy = SignedPolicy::Load(client_address->GetIpAddress(), request_url->ToUrlString(), policy_query_key_name, signature_query_key_name, secret_key);
+		auto signed_policy = SignedPolicy::Load(request_info, policy_query_key_name, signature_query_key_name, secret_key);
 		if(signed_policy == nullptr)
 		{
 			// Probably this doesn't happen
@@ -338,52 +279,4 @@ std::tuple<AccessController::VerificationResult, std::shared_ptr<const SignedPol
 	// Probably this doesn't happen
 	logte("Could not find VirtualHost (%s)", vhost_name.CStr());
 	return {AccessController::VerificationResult::Error, nullptr};
-}
-
-std::tuple<AccessController::VerificationResult, std::shared_ptr<const SignedToken>> AccessController::VerifyBySignedToken(const std::shared_ptr<const ov::Url> &request_url, const std::shared_ptr<ov::SocketAddress> &client_address)
-{
-	auto orchestrator = ocst::Orchestrator::GetInstance();
-	auto vhost_name = orchestrator->GetVhostNameFromDomain(request_url->Host());
-
-	if (vhost_name.IsEmpty())
-	{
-		logte("Could not resolve the domain: %s", request_url->Host().CStr());
-		return {AccessController::VerificationResult::Error, nullptr};
-	}
-
-	auto item = ocst::Orchestrator::GetInstance()->GetHostInfo(vhost_name);
-	if(item.has_value())
-	{
-		auto vhost_item = item.value();
-
-		// Handle SignedToken if needed
-		auto &signed_token_config = vhost_item.GetSignedToken();
-		if (!signed_token_config.IsParsed() || signed_token_config.GetCryptoKey().IsEmpty())
-		{
-			// The vhost doesn't use the signed url feature.
-			return {AccessController::VerificationResult::Off, nullptr};
-		}
-
-		auto crypto_key = signed_token_config.GetCryptoKey();
-		auto query_string_key = signed_token_config.GetQueryStringKey();
-
-		auto signed_token = SignedToken::Load(client_address->ToString(), request_url->ToUrlString(), query_string_key, crypto_key);
-		if (signed_token == nullptr)
-		{
-			// Probably this doesn't happen
-			logte("Could not load SingedToken");
-			return {AccessController::VerificationResult::Error, nullptr};
-		}
-
-		if(signed_token->GetErrCode() != SignedToken::ErrCode::PASSED)
-		{
-			return {AccessController::VerificationResult::Fail, signed_token};
-		}
-
-		return {AccessController::VerificationResult::Pass, signed_token};
-	}
-
-	// Probably this doesn't happen
-	logte("Could not find VirtualHost (%s)", vhost_name.CStr());
-	return {AccessController::VerificationResult::Error, nullptr}; 
 }

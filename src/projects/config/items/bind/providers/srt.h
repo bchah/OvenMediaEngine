@@ -10,7 +10,7 @@
 
 #include "../../common/ranged_port.h"
 #include "../../common/options.h"
-#include "../../common/stream_map.h"
+#include "../../common/srt_stream_map.h"
 #include "./provider.h"
 
 namespace cfg
@@ -23,22 +23,13 @@ namespace cfg
 			{
 			protected:
 				cmn::Options _options;
-                cmn::StreamMap _stream_map;
+				cmn::SrtStreamMap _stream_map;
 
 			public:
 				using Item::IsParsed;
 
 				explicit SRT(const char *port)
 					: Provider<cmn::RangedPort>(port)
-				{
-				}
-
-				SRT()
-				{
-				}
-
-				SRT(const char *port, const char *tls_port)
-					: Provider<cmn::RangedPort>(port, tls_port)
 				{
 				}
 

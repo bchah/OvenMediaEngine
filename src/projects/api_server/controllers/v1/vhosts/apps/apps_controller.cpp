@@ -19,6 +19,7 @@
 #include "output_profiles/output_profiles_controller.h"
 #include "streams/streams_controller.h"
 #include "scheduled_channels/scheduled_channels_controller.h"
+#include "multiplex_channels/multiplex_channels_controller.h"
 
 namespace api
 {
@@ -39,6 +40,7 @@ namespace api
 			CreateSubController<StreamsController>(R"(\/(?<app_name>[^\/:]*)\/streams)");
 
 			CreateSubController<ScheduledChannelsController>(R"(\/(?<app_name>[^\/:]*)\/scheduledChannels)");
+			CreateSubController<MultiplexChannelsController>(R"(\/(?<app_name>[^\/:]*)\/multiplexChannels)");
 
 			// Branch into output profile controller
 			CreateSubController<OutputProfilesController>(R"(\/(?<app_name>[^\/:]*)\/outputProfiles)");
@@ -116,7 +118,7 @@ namespace api
 			{
 				auto &app = item.second;
 
-				response.append(app->GetName().GetAppName().CStr());
+				response.append(app->GetVHostAppName().GetAppName().CStr());
 			}
 
 			return response;
@@ -174,13 +176,13 @@ namespace api
 				ocst::Orchestrator::GetInstance()->DeleteApplication(*app),
 				"delete",
 				"application",
-				ov::String::FormatString("%s/%s", vhost->GetName().CStr(), app->GetName().GetAppName().CStr()));
+				ov::String::FormatString("%s/%s", vhost->GetName().CStr(), app->GetVHostAppName().GetAppName().CStr()));
 
 			ThrowIfOrchestratorNotSucceeded(
 				ocst::Orchestrator::GetInstance()->CreateApplication(*vhost, app_config),
 				"create",
 				"application",
-				ov::String::FormatString("%s/%s", vhost->GetName().CStr(), app->GetName().GetAppName().CStr()));
+				ov::String::FormatString("%s/%s", vhost->GetName().CStr(), app->GetVHostAppName().GetAppName().CStr()));
 
 			auto app_metrics = GetApplication(vhost, app_config.GetName().CStr());
 
@@ -197,7 +199,7 @@ namespace api
 				ocst::Orchestrator::GetInstance()->DeleteApplication(*app),
 				"delete",
 				"application",
-				ov::String::FormatString("%s/%s", vhost->GetName().CStr(), app->GetName().GetAppName().CStr()));
+				ov::String::FormatString("%s/%s", vhost->GetName().CStr(), app->GetVHostAppName().GetAppName().CStr()));
 
 			return {};
 		}

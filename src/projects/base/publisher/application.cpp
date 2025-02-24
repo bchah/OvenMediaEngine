@@ -58,6 +58,28 @@ namespace pub
 		return true;
 	}
 
+	uint32_t ApplicationWorker::GetWorkerId() const
+	{
+		return _worker_id;
+	}
+
+	void ApplicationWorker::OnStreamCreated(const std::shared_ptr<info::Stream> &info)
+	{
+		logti("Stream(%s/%u) created on AppWorker (%s / %d)", info->GetName().CStr(), info->GetId(), _worker_name.CStr(), _worker_id);
+		_stream_count++;
+	}
+
+	void ApplicationWorker::OnStreamDeleted(const std::shared_ptr<info::Stream> &info)
+	{
+		logti("Stream(%s/%u) deleted on AppWorker (%s / %d)", info->GetName().CStr(), info->GetId(), _worker_name.CStr(), _worker_id);
+		_stream_count--;
+	}
+
+	uint32_t ApplicationWorker::GetStreamCount() const
+	{
+		return _stream_count.load();
+	}
+
 	bool ApplicationWorker::PushMediaPacket(const std::shared_ptr<Stream> &stream, const std::shared_ptr<MediaPacket> &media_packet)
 	{
 		auto data = std::make_shared<ApplicationWorker::StreamData>(stream, media_packet);
@@ -92,24 +114,47 @@ namespace pub
 
 			// Check media data is available
 			auto stream_data = PopStreamData();
-			if ((stream_data != nullptr) && (stream_data->_stream != nullptr) && (stream_data->_media_packet != nullptr))
+			if (stream_data == nullptr)
 			{
-				if (stream_data->_media_packet->GetMediaType() == cmn::MediaType::Video)
+				continue;
+			}
+			
+			auto stream = stream_data->_stream;
+			auto media_packet = stream_data->_media_packet;
+			if (stream == nullptr || media_packet == nullptr)
+			{
+				continue;
+			}
+
+			// State::CREATED could be needed for some cases
+			if (stream->GetState() == Stream::State::ERROR || stream->GetState() == Stream::State::STOPPED)
+			{
+				continue;
+			}
+
+			if (media_packet->GetMediaType() == cmn::MediaType::Video)
+			{
+				stream->SendVideoFrame(stream_data->_media_packet);
+			}
+			else if (media_packet->GetMediaType() == cmn::MediaType::Audio)
+			{
+				stream->SendAudioFrame(stream_data->_media_packet);
+			}
+			else if (media_packet->GetMediaType() == cmn::MediaType::Data)
+			{
+				if (media_packet->GetBitstreamFormat() == cmn::BitstreamFormat::OVEN_EVENT)
 				{
-					stream_data->_stream->SendVideoFrame(stream_data->_media_packet);
-				}
-				else if (stream_data->_media_packet->GetMediaType() == cmn::MediaType::Audio)
-				{
-					stream_data->_stream->SendAudioFrame(stream_data->_media_packet);
-				}
-				else if (stream_data->_media_packet->GetMediaType() == cmn::MediaType::Data)
-				{
-					stream_data->_stream->SendDataFrame(stream_data->_media_packet);
+					auto event = std::static_pointer_cast<MediaEvent>(media_packet);
+					stream->OnEvent(event);
 				}
 				else
 				{
-					// Nothing can do
+					stream->SendDataFrame(stream_data->_media_packet);
 				}
+			}
+			else
+			{
+				// Nothing can do
 			}
 		}
 	}
@@ -166,10 +211,10 @@ namespace pub
 
 		for (uint32_t i = 0; i < _application_worker_count; i++)
 		{
-			auto app_worker = std::make_shared<ApplicationWorker>(i, GetName().CStr(), StringFromPublisherType(_publisher->GetPublisherType()));
+			auto app_worker = std::make_shared<ApplicationWorker>(i, GetVHostAppName().CStr(), StringFromPublisherType(_publisher->GetPublisherType()));
 			if (app_worker->Start() == false)
 			{
-				logte("Cannot create ApplicationWorker (%s/%s/%d)", GetApplicationTypeName(), GetName().CStr(), i);
+				logte("Cannot create ApplicationWorker (%s/%s/%d)", GetApplicationTypeName(), GetVHostAppName().CStr(), i);
 				Stop();
 
 				return false;
@@ -178,7 +223,7 @@ namespace pub
 			_application_workers.push_back(app_worker);
 		}
 
-		logti("%s has created [%s] application", GetApplicationTypeName(), GetName().CStr());
+		logti("%s has created [%s] application", GetApplicationTypeName(), GetVHostAppName().CStr());
 
 		return true;
 	}
@@ -197,7 +242,7 @@ namespace pub
 		// release remaining streams
 		DeleteAllStreams();
 
-		logti("%s has deleted [%s] application", GetApplicationTypeName(), GetName().CStr());
+		logti("%s has deleted [%s] application", GetApplicationTypeName(), GetVHostAppName().CStr());
 
 		return true;
 	}
@@ -228,6 +273,8 @@ namespace pub
 			return false;
 		}
 
+		MapStreamToWorker(info);
+
 		std::lock_guard<std::shared_mutex> lock(_stream_map_mutex);
 		_streams[info->GetId()] = stream;
 
@@ -249,6 +296,8 @@ namespace pub
 		auto stream = stream_it->second;
 
 		lock.unlock();
+
+		UnmapStreamToWorker(info);
 
 		if (DeleteStream(info) == false)
 		{
@@ -310,15 +359,90 @@ namespace pub
 		return stream->OnStreamUpdated(info);
 	}
 
+	std::shared_ptr<ApplicationWorker> Application::GetLowestLoadWorker()
+	{
+		std::shared_lock lock(_application_worker_lock);
+		uint32_t min_load = UINT32_MAX;
+		uint32_t min_load_worker_id = 0;
+
+		for (const auto &worker : _application_workers)
+		{
+			auto stream_count = worker->GetStreamCount();
+			if (stream_count < min_load)
+			{
+				min_load = stream_count;
+				min_load_worker_id = worker->GetWorkerId();
+
+				if (min_load == 0)
+				{
+					break;
+				}
+			}
+		}
+
+		return _application_workers[min_load_worker_id];
+	}
+
+	void Application::MapStreamToWorker(const std::shared_ptr<info::Stream> &info)
+	{
+		auto app_worker = GetLowestLoadWorker();
+		if (app_worker == nullptr)
+		{
+			logte("Cannot find ApplicationWorker for stream mapping. %s / %u", info->GetName().CStr(), info->GetId());
+			return;
+		}
+
+		app_worker->OnStreamCreated(info);
+
+		std::unique_lock<std::shared_mutex> lock(_stream_app_worker_map_lock);
+		_stream_app_worker_map[info->GetId()] = app_worker->GetWorkerId();
+	}
+	
+	void Application::UnmapStreamToWorker(const std::shared_ptr<info::Stream> &info)
+	{
+		auto app_worker = GetWorkerByStreamID(info->GetId());
+		if (app_worker != nullptr)
+		{
+			app_worker->OnStreamDeleted(info);
+		}
+		else
+		{
+			logte("Cannot find ApplicationWorker for stream unmapping. %s / %u", info->GetName().CStr(), info->GetId());
+		}
+
+		std::unique_lock<std::shared_mutex> lock(_stream_app_worker_map_lock);
+		_stream_app_worker_map.erase(info->GetId());
+	}
+
 	std::shared_ptr<ApplicationWorker> Application::GetWorkerByStreamID(info::stream_id_t stream_id)
 	{
 		if (_application_worker_count == 0)
 		{
 			return nullptr;
 		}
+		
+		uint32_t worker_id = 0;
 
-		std::shared_lock<std::shared_mutex> worker_lock(_application_worker_lock);
-		return _application_workers[stream_id % _application_worker_count];
+		{
+			std::shared_lock<std::shared_mutex> lock(_stream_app_worker_map_lock);
+			auto it = _stream_app_worker_map.find(stream_id);
+			if (it == _stream_app_worker_map.end())
+			{
+				logte("(%s/%s) cannot find ApplicationWorker for stream mapping. %u", GetApplicationTypeName(), GetVHostAppName().CStr(), stream_id);
+				return nullptr;
+			}
+
+			worker_id = it->second;
+		}
+
+		std::shared_lock<std::shared_mutex> lock(_application_worker_lock);
+		if (worker_id >= _application_workers.size())
+		{
+			logte("Cannot find ApplicationWorker for stream mapping. %u", stream_id);
+			return nullptr;
+		}
+
+		return _application_workers[worker_id];
 	}
 
 	bool Application::OnSendFrame(const std::shared_ptr<info::Stream> &stream,
@@ -363,255 +487,5 @@ namespace pub
 		}
 
 		return nullptr;
-	}
-
-	PushApplication::PushApplication(const std::shared_ptr<Publisher> &publisher, const info::Application &application_info)
-		: Application(publisher, application_info),
-		  _session_control_stop_thread_flag(true)
-	{
-	}
-
-	bool PushApplication::Start()
-	{
-		_session_control_stop_thread_flag = false;
-		_session_contol_thread = std::thread(&PushApplication::SessionControlThread, this);
-		pthread_setname_np(_session_contol_thread.native_handle(), "PushSessionCtrl");
-
-		return Application::Start();
-	}
-
-	bool PushApplication::Stop()
-	{
-		if (_session_control_stop_thread_flag == false)
-		{
-			_session_control_stop_thread_flag = true;
-			if (_session_contol_thread.joinable())
-			{
-				_session_contol_thread.join();
-			}
-		}
-
-		return Application::Stop();
-	}
-
-	std::shared_ptr<info::Push> PushApplication::GetPushInfoById(ov::String id)
-	{
-		std::shared_lock<std::shared_mutex> lock(_push_map_mutex);
-		auto it = _pushes.find(id);
-		if (it == _pushes.end())
-		{
-			return nullptr;
-		}
-
-		return it->second;
-	}
-
-	std::shared_ptr<ov::Error> PushApplication::StartPush(const std::shared_ptr<info::Push> &push)
-	{
-		// Validation check for duplicate id
-		if (GetPushInfoById(push->GetId()) != nullptr)
-		{
-			ov::String error_message = "Duplicate ID";
-			return ov::Error::CreateError(PUSH_PUBLISHER_ERROR_DOMAIN, ErrorCode::FailureDuplicateKey, error_message);
-		}
-
-		// 녹화 활성화
-		push->SetEnable(true);
-		push->SetRemove(false);
-
-		std::unique_lock<std::shared_mutex> lock(_push_map_mutex);
-		_pushes[push->GetId()] = push;
-
-		return ov::Error::CreateError(PUSH_PUBLISHER_ERROR_DOMAIN, ErrorCode::Success, "Success");
-	}
-
-	std::shared_ptr<ov::Error> PushApplication::StopPush(const std::shared_ptr<info::Push> &push)
-	{
-		if (push->GetId().IsEmpty() == true)
-		{
-			ov::String error_message = "There is no required parameter [";
-
-			if (push->GetId().IsEmpty() == true)
-			{
-				error_message += " id";
-			}
-
-			error_message += "]";
-
-			return ov::Error::CreateError(PUSH_PUBLISHER_ERROR_DOMAIN, ErrorCode::FailureInvalidParameter, error_message);
-		}
-
-		auto push_info = GetPushInfoById(push->GetId());
-		if (push_info == nullptr)
-		{
-			ov::String error_message = ov::String::FormatString("There is no push information related to the ID [%s]", push->GetId().CStr());
-
-			return ov::Error::CreateError(PUSH_PUBLISHER_ERROR_DOMAIN, ErrorCode::FailureNotExist, error_message);
-		}
-
-		push_info->SetEnable(false);
-		push_info->SetRemove(true);
-
-		return ov::Error::CreateError(PUSH_PUBLISHER_ERROR_DOMAIN, ErrorCode::Success, "Success");
-	}
-
-	std::shared_ptr<ov::Error> PushApplication::GetPushes(const std::shared_ptr<info::Push> push, std::vector<std::shared_ptr<info::Push>> &results)
-	{
-		std::shared_lock<std::shared_mutex> lock(_push_map_mutex);
-
-		for (auto &[id, push] : _pushes)
-		{
-			if (!push->GetId().IsEmpty() && push->GetId() != id)
-				continue;
-
-			results.push_back(push);
-		}
-
-		return ov::Error::CreateError(PUSH_PUBLISHER_ERROR_DOMAIN, ErrorCode::Success, "Success");
-	}
-
-	void PushApplication::StartPushInternal(const std::shared_ptr<info::Push> &push, std::shared_ptr<pub::Session> session)
-	{
-		// Check the status of the session.
-		auto prev_session_state = session->GetState();
-
-		switch (prev_session_state)
-		{
-			// State of disconnected and ready to connect
-			case pub::Session::SessionState::Ready:
-				[[fallthrough]];
-			// State of stopped
-			case pub::Session::SessionState::Stopped:
-				[[fallthrough]];
-			// State of failed (connection refused, disconnected)
-			case pub::Session::SessionState::Error:
-				logti("Push started. %s", push->GetInfoString().CStr());
-				session->Start();
-				break;
-			// State of Started
-			case pub::Session::SessionState::Started:
-				[[fallthrough]];
-			// State of Stopping
-			case pub::Session::SessionState::Stopping:
-				break;
-		}
-
-		auto session_state = session->GetState();
-		if (prev_session_state != session_state)
-		{
-			logtd("Changed push state. (%d - %d)", prev_session_state, session_state);
-		}
-	}
-
-	void PushApplication::StopPushInternal(const std::shared_ptr<info::Push> &push, std::shared_ptr<pub::Session> session)
-	{
-		auto prev_session_state = session->GetState();
-
-		switch (prev_session_state)
-		{
-			case pub::Session::SessionState::Started:
-				session->Stop();
-				logti("Push ended. %s", push->GetInfoString().CStr());
-				break;
-			case pub::Session::SessionState::Ready:
-				[[fallthrough]];
-			case pub::Session::SessionState::Stopping:
-				[[fallthrough]];
-			case pub::Session::SessionState::Stopped:
-				[[fallthrough]];
-			case pub::Session::SessionState::Error:
-				break;
-		}
-
-		auto session_state = session->GetState();
-		if (prev_session_state != session_state)
-		{
-			logtd("Changed push state. (%d - %d)", prev_session_state, session_state);
-		}
-	}
-
-	void PushApplication::SessionControlThread()
-	{
-		ov::StopWatch	timer;
-		int64_t timer_interval = 1000;
-		timer.Start();
-
-		while (!_session_control_stop_thread_flag)
-		{
-			if (timer.IsElapsed(timer_interval) && timer.Update())
-			{
-				// list of Push to be deleted
-				std::vector<std::shared_ptr<info::Push>> remove_pushes;
-				// Replication of pushes
-				std::map<ov::String, std::shared_ptr<info::Push>> replication_pushes;
-
-				if (true)
-				{
-					// Copy the push list to the replication list. 
-					// Avoid locking while starting/ending multiple pushes.
-					std::lock_guard<std::shared_mutex> lock(_push_map_mutex);
-					std::copy(_pushes.begin(), _pushes.end(), std::inserter(replication_pushes, replication_pushes.begin()));
-				}
-
-				for (auto &[id, push] : replication_pushes)
-				{
-					// If it is a removed push job, add to the remove waiting list
-					if (push->GetRemove() == true)
-					{
-						remove_pushes.push_back(push);
-					}
-
-					// Find a stream by stream name
-					auto stream = GetStream(push->GetStreamName());
-					if (stream == nullptr || stream->GetState() != pub::Stream::State::STARTED)
-					{
-						logtd("There is no stream for Push or it has not started. %s", push->GetInfoString().CStr());
-						push->SetState(info::Push::PushState::Ready);
-						continue;
-					}
-
-					// Find a session by session ID
-					auto session = stream->GetSession(push->GetSessionId());
-					if (session == nullptr)
-					{
-						session = stream->CreatePushSession(push);
-						if (session == nullptr)
-						{
-							logte("Could not create session");
-							continue;
-						}
-
-						push->SetSessionId(session->GetId());
-					}
-
-					// Starts only in the enabled state and stops otherwise
-					if (push->GetEnable() == true && push->GetRemove() == false)
-					{
-						StartPushInternal(push, session);
-					}
-					else
-					{
-						StopPushInternal(push, session);
-					}
-				}
-
-				if (true)
-				{
-					std::unique_lock<std::shared_mutex> lock(_push_map_mutex);
-					for (auto &push : remove_pushes)
-					{
-						auto stream = GetStream(push->GetStreamName());
-						if (stream != nullptr)
-						{
-							stream->RemoveSession(push->GetSessionId());
-						}
-
-						_pushes.erase(push->GetId());
-					}
-				}
-			}
-
-			usleep(100 * 1000);	 // 100ms
-		}
 	}
 }  // namespace pub

@@ -81,6 +81,21 @@ namespace info
 		}
 		~Playlist() = default;
 
+		// copy constructor
+		Playlist(const Playlist &other)
+		{
+			_name = other._name;
+			_file_name = other._file_name;
+			_webrtc_auto_abr = other._webrtc_auto_abr;
+			_hls_chunklist_path_depth = other._hls_chunklist_path_depth;
+			_enable_ts_packaging = other._enable_ts_packaging;
+
+			for (auto &rendition : other._renditions)
+			{
+				_renditions.push_back(std::make_shared<Rendition>(*rendition));
+			}
+		}
+
 		void SetWebRtcAutoAbr(bool enabled)
 		{
 			_webrtc_auto_abr = enabled;
@@ -89,6 +104,16 @@ namespace info
 		bool IsWebRtcAutoAbr() const
 		{
 			return _webrtc_auto_abr;
+		}
+
+		void EnableTsPackaging(bool enabled)
+		{
+			_enable_ts_packaging = enabled;
+		}
+
+		bool IsTsPackagingEnabled() const
+		{
+			return _enable_ts_packaging;
 		}
 
 		void SetHlsChunklistPathDepth(int depth)
@@ -147,6 +172,11 @@ namespace info
 				return false;
 			}
 
+			if (_enable_ts_packaging != rhs._enable_ts_packaging)
+			{
+				return false;
+			}
+
 			if (_renditions.size() != rhs._renditions.size())
 			{
 				return false;
@@ -175,6 +205,7 @@ namespace info
 
 		bool _webrtc_auto_abr = false;
 		int _hls_chunklist_path_depth = -1;
+		bool _enable_ts_packaging = false;
 
 		std::vector<std::shared_ptr<Rendition>> _renditions;
 	};

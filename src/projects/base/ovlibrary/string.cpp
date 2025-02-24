@@ -724,6 +724,28 @@ namespace ov
 		return string;
 	}
 
+	String String::Join(const std::vector<String> &list, char separator)
+	{
+		String string;
+		bool is_first = true;
+
+		for (auto const &item : list)
+		{
+			if (is_first == false)
+			{
+				string.Append(separator);
+			}
+			else
+			{
+				is_first = false;
+			}
+
+			string.Append(item.CStr());
+		}
+
+		return string;
+	}
+
 	bool String::HasPrefix(String prefix) const
 	{
 		return (Left(prefix.GetLength()) == prefix);
@@ -945,6 +967,29 @@ namespace ov
 		}
 
 		return std::make_shared<ov::Data>(_buffer, _length + (include_null_char ? 1 : 0), false);
+	}
+
+	String String::Repeat(const char *str, size_t count)
+	{
+		if (count > 0)
+		{
+			auto length = ::strlen(str);
+			auto total_length = (length * count);
+			ov::String string(total_length);
+
+			string.SetLength(total_length);
+			auto buffer = string.GetBuffer();
+
+			for (size_t index = 0; index < count; index++)
+			{
+				::memcpy(buffer, str, length);
+				buffer += length;
+			}
+
+			return string;
+		}
+
+		return "";
 	}
 
 	bool String::Alloc(size_t length, bool alloc_exactly) noexcept

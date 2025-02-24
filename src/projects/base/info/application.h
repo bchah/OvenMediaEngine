@@ -32,6 +32,8 @@ namespace info
 	class Application
 	{
 	public:
+		virtual ~Application() = default;
+
 		virtual const char *GetApplicationTypeName()
 		{
 			return "ApplicationInfo";
@@ -47,7 +49,7 @@ namespace info
 
 		application_id_t GetId() const;
 		ov::String GetUUID() const;
-		const VHostAppName &GetName() const;
+		const VHostAppName &GetVHostAppName() const;
 		const Host &GetHostInfo() const;
 		bool IsDynamicApp() const;
 

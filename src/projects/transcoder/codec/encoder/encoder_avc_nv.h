@@ -25,7 +25,7 @@ public:
 
 	int GetSupportedFormat() const noexcept override 
 	{
-		return AV_PIX_FMT_NV12;
+		return AV_PIX_FMT_CUDA;
 	}
 
 	cmn::BitstreamFormat GetBitstreamFormat() const noexcept override
@@ -35,7 +35,7 @@ public:
 	
 	bool Configure(std::shared_ptr<MediaTrack> context) override;
 
-	void CodecThread() override;
+	bool InitCodec() override;
 
 private:
 	bool SetCodecParams() override;	
