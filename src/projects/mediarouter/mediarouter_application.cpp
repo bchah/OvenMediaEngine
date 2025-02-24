@@ -397,7 +397,7 @@ bool MediaRouteApplication::OnStreamCreated(const std::shared_ptr<MediaRouterApp
 	}
 
 	// If all track information is validity, Notify the observer that the current stream is prepared.
-	if (stream->IsStreamPrepared() == false && stream->AreAllTracksReady() == true)
+	if (stream->IsStreamPrepared() == false && stream->IsStreamReady() == true)
 	{
 		NotifyStreamPrepared(stream);
 	}
@@ -424,13 +424,27 @@ std::shared_ptr<MediaRouteStream> MediaRouteApplication::CreateOutboundStream(co
 {
 	std::lock_guard<std::shared_mutex> lock_guard(_streams_lock);
 
-	auto new_stream = std::make_shared<MediaRouteStream>(stream_info, MediaRouterStreamType::OUTBOUND);
+	// Since the publisher creates the stream by copying the stream_info, 
+	// it eventually loses the link to the original stream. 
+	// For this, the relay stream must also be linked to the input stream.
+	auto out_stream_info = stream_info;
+	if (stream_info->GetRepresentationType() == StreamRepresentationType::Relay)
+	{
+		out_stream_info = std::make_shared<info::Stream>(*stream_info);
+		if (!out_stream_info)
+		{
+			return nullptr;
+		}
+		out_stream_info->LinkInputStream(stream_info);
+	}
+
+	auto new_stream = std::make_shared<MediaRouteStream>(out_stream_info, MediaRouterStreamType::OUTBOUND);
 	if (!new_stream)
 	{
 		return nullptr;
 	}
 	
-	_outbound_streams.insert(std::make_pair(stream_info->GetId(), new_stream));
+	_outbound_streams.insert(std::make_pair(out_stream_info->GetId(), new_stream));
 
 	return new_stream;
 }
@@ -475,7 +489,7 @@ bool MediaRouteApplication::NotifyStreamCreate(const std::shared_ptr<info::Strea
 bool MediaRouteApplication::NotifyStreamPrepared(std::shared_ptr<MediaRouteStream> &stream)
 {
 	std::shared_lock<std::shared_mutex> lock(_observers_lock);
-	auto observers = _observers; // Avoid deadlock
+	auto observers = _observers;  // Avoid deadlock
 	lock.unlock();
 
 	logti("[%s/%s(%u)] Stream has been prepared %s", _application_info.GetVHostAppName().CStr(), stream->GetStream()->GetName().CStr(), stream->GetStream()->GetId(), stream->GetStream()->GetInfoString().CStr());
@@ -484,33 +498,28 @@ bool MediaRouteApplication::NotifyStreamPrepared(std::shared_ptr<MediaRouteStrea
 	{
 		auto observer_type = observer->GetObserverType();
 
-		switch (stream->GetInoutType())
+		if (stream->IsInbound())
 		{
-			case MediaRouterStreamType::INBOUND: {
-				if (IS_OBSERVER_TRANSCODER(observer_type) || IS_OBSERVER_ORCHESTRATOR(observer_type))
-				{
-					logtd("[%s/%s(%u)] Notify prepared stream to transcoder", stream->GetStream()->GetApplicationName(), stream->GetStream()->GetName().CStr(), stream->GetStream()->GetId());
+			if (IS_OBSERVER_TRANSCODER(observer_type) || IS_OBSERVER_ORCHESTRATOR(observer_type))
+			{
+				logtd("[%s/%s(%u)] Notify prepared stream to transcoder", stream->GetStream()->GetApplicationName(), stream->GetStream()->GetName().CStr(), stream->GetStream()->GetId());
 
-					observer->OnStreamPrepared(stream->GetStream());
-				}
+				observer->OnStreamPrepared(stream->GetStream());
 			}
-			break;
+		}
+		else if (stream->IsOutbound())
+		{
+			if (IS_OBSERVER_PUBLISHER(observer_type) || IS_OBSERVER_RELAY(observer_type) || IS_OBSERVER_ORCHESTRATOR(observer_type))
+			{
+				logtd("[%s/%s(%u)] Notify prepared stream to publisher", stream->GetStream()->GetApplicationName(), stream->GetStream()->GetName().CStr(), stream->GetStream()->GetId());
 
-			case MediaRouterStreamType::OUTBOUND: {
-				if (IS_OBSERVER_PUBLISHER(observer_type) || IS_OBSERVER_RELAY(observer_type) || IS_OBSERVER_ORCHESTRATOR(observer_type))
-				{
-					logtd("[%s/%s(%u)] Notify prepared stream to publisher", stream->GetStream()->GetApplicationName(), stream->GetStream()->GetName().CStr(), stream->GetStream()->GetId());
-
-					observer->OnStreamPrepared(stream->GetStream());
-				}
+				observer->OnStreamPrepared(stream->GetStream());
 			}
-			break;
-
-			default: {
-				logtw("Unknown type of stream");
-				return false;
-			}
-			break;
+		}
+		else
+		{
+			logtw("Unknown type of stream");
+			return false;
 		}
 	}
 
@@ -875,7 +884,7 @@ void MediaRouteApplication::InboundWorkerThread(uint32_t worker_id)
 
 		// When the inbound stream is finished parsing track information,
 		// Notify the Observer that the stream is parsed
-		if (stream->IsStreamPrepared() == false && stream->AreAllTracksReady() == true)
+		if (stream->IsStreamPrepared() == false && stream->IsStreamReady() == true)
 		{
 			NotifyStreamPrepared(stream);
 		}
@@ -960,7 +969,7 @@ void MediaRouteApplication::OutboundWorkerThread(uint32_t worker_id)
 			continue;
 		}
 
-		if (stream->IsStreamPrepared() == false && stream->AreAllTracksReady() == true)
+		if (stream->IsStreamPrepared() == false && stream->IsStreamReady() == true)
 		{
 			NotifyStreamPrepared(stream);
 		}

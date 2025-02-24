@@ -13,7 +13,7 @@ Our goal is to make it easier for you to build a stable broadcasting/streaming s
 ## Features
 
 * **Ingest**
-  * Push: WebRTC, WHIP, SRT, RTMP, MPEG-2 TS
+  * Push: WebRTC, WHIP (Simulcast), SRT, RTMP, MPEG-2 TS
   * Pull: RTSP
   * Scheduled Channel (Pre-recorded Live)
   * Multiplex Channel (Duplicate stream / Mux tracks)
@@ -35,6 +35,10 @@ Our goal is to make it easier for you to build a stable broadcasting/streaming s
   * MPEG-2 TS Container
   * Audio/Video Muxed
   * DVR (Live Rewind)
+* **Sub-Second Latency Streaming using SRT**
+  * Secure Reliable Transport
+  * MPEG-2 TS Container
+  * Audio/Video Muxed
 * **Embedded Live Transcoder**
   * Video: VP8, H.264, H.265(Hardware encoder only), Pass-through
   * Audio: Opus, AAC, Pass-through
@@ -66,7 +70,7 @@ Please read [Getting Started](getting-started/) chapter in the tutorials.
 
 Thank you so much for being so interested in OvenMediaEngine.
 
-We need your help to keep and develop our open-source project, and we want to tell you that you can contribute in many ways. Please see our [Guidelines](../CONTRIBUTING.md), [Rules](../CODE\_OF\_CONDUCT.md), and [Contribute](https://www.ovenmediaengine.com/contribute).
+We need your help to keep and develop our open-source project, and we want to tell you that you can contribute in many ways. Please see our [Guidelines](../CONTRIBUTING.md), [Rules](../CODE_OF_CONDUCT.md), and [Contribute](https://www.ovenmediaengine.com/contribute).
 
 * [Finding Bugs](../CONTRIBUTING.md#finding-bugs)
 * [Reviewing Code](../CONTRIBUTING.md#reviewing-code)

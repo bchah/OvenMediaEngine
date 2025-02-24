@@ -274,6 +274,9 @@ namespace pvd
                             {
                                 continue;
                             }
+
+							need_break = true;
+							break;
                         }
                         // Play next item
                         else
@@ -528,6 +531,7 @@ namespace pvd
             auto single_file_dts = dts - track_single_file_dts_offset_map[track_id];
            
             AdjustTimestampByBase(track_id, pts, dts, std::numeric_limits<int64_t>::max(), duration);
+			logtd("Scheduled Channel Send Packet : %s/%s: Track %d, origin dts : %lld, pts %lld, dts %lld, duration %lld, tb %f", GetApplicationName(), GetName().CStr(), track_id, single_file_dts, pts, dts, duration, track->GetTimeBase().GetExpr());
 
             media_packet->SetPts(pts);
             media_packet->SetDts(dts);
@@ -714,6 +718,7 @@ namespace pvd
         bool video_track_needed = _channel_info.video_track;
         bool audio_track_needed = _channel_info.audio_track;
 
+		uint32_t audio_index = 0;
         int64_t total_duration_ms = 0;
         _origin_id_track_id_map.clear();
         for (uint32_t track_id = 0; track_id < format_context->nb_streams; track_id++)
@@ -738,8 +743,11 @@ namespace pvd
                     continue;
                 }
 
+				auto old_track = GetTrack(kScheduledVideoTrackId);
+
                 new_track->SetId(kScheduledVideoTrackId);
                 new_track->SetTimeBase(1, kScheduledVideoTimebase);
+				new_track->SetPublicName(old_track->GetPublicName());
                 _origin_id_track_id_map.emplace(stream->index, kScheduledVideoTrackId);
                 UpdateTrack(new_track);
 
@@ -763,9 +771,16 @@ namespace pvd
                     continue;
                 }
 
-                new_track->SetId(kScheduledAudioTrackId);
+				auto audio_track_id = kScheduledAudioTrackId + audio_index;
+				audio_index++;
+				auto old_track = GetTrack(audio_track_id);
+
+                new_track->SetId(audio_track_id);
                 new_track->SetTimeBase(1, new_track->GetSampleRate());
-                _origin_id_track_id_map.emplace(stream->index, kScheduledAudioTrackId);
+				new_track->SetPublicName(old_track->GetPublicName());
+				new_track->SetLanguage(old_track->GetLanguage());
+				new_track->SetCharacteristics(old_track->GetCharacteristics());
+                _origin_id_track_id_map.emplace(stream->index, audio_track_id);
                 UpdateTrack(new_track);
 
                 if (total_duration_ms == 0)
@@ -776,8 +791,11 @@ namespace pvd
                 {  
                     total_duration_ms = std::min(total_duration_ms, (int64_t)(stream->duration * 1000 * ::av_q2d(stream->time_base)));
                 }
-
-                audio_track_needed = false;
+				
+				if (audio_index + 1 > _channel_info.audio_map.size())
+				{
+                	audio_track_needed = false;
+				}
             }
             else
             {
@@ -894,8 +912,9 @@ namespace pvd
                     break;
                 }
             }
-
-            auto track_id = FindTrackIdByOriginId(media_packet->GetTrackId());
+			
+			auto origin_track_id = media_packet->GetTrackId();
+            auto track_id = FindTrackIdByOriginId(origin_track_id);
             if (track_id < 0)
             {
                 logtd("Scheduled Channel : %s/%s: Failed to find track %d", GetApplicationName(), GetName().CStr(), media_packet->GetTrackId());
@@ -936,7 +955,7 @@ namespace pvd
                 continue;
             }
 
-            auto origin_tb = stream_tap->GetStreamInfo()->GetTrack(track_id)->GetTimeBase();
+            auto origin_tb = stream_tap->GetStreamInfo()->GetTrack(origin_track_id)->GetTimeBase();
 
             media_packet->SetTrackId(track_id);
             auto pts = media_packet->GetPts();
@@ -1116,6 +1135,7 @@ namespace pvd
         _origin_id_track_id_map.clear();
         bool video_track_needed = _channel_info.video_track;
         bool audio_track_needed = _channel_info.audio_track;
+		uint32_t audio_index = 0;
         for (const auto &[track_id, track] : stream_tap->GetStreamInfo()->GetTracks())
         {
             if (video_track_needed == false && audio_track_needed == false)
@@ -1132,8 +1152,11 @@ namespace pvd
                     continue;
                 }
 
+				auto old_track = GetTrack(kScheduledVideoTrackId);
+
                 new_track->SetId(kScheduledVideoTrackId);
                 new_track->SetTimeBase(1, kScheduledVideoTimebase);
+				new_track->SetPublicName(old_track->GetPublicName());
                 _origin_id_track_id_map.emplace(track_id, kScheduledVideoTrackId);
                 UpdateTrack(new_track);
 
@@ -1147,13 +1170,23 @@ namespace pvd
                 {
                     continue;
                 }
+				
+				auto audio_track_id = kScheduledAudioTrackId + audio_index;
+				audio_index++;
+				auto old_track = GetTrack(audio_track_id);
 
-                new_track->SetId(kScheduledAudioTrackId);
+                new_track->SetId(audio_track_id);
                 new_track->SetTimeBase(1, new_track->GetSampleRate());
-                _origin_id_track_id_map.emplace(track_id, kScheduledAudioTrackId);
+				new_track->SetPublicName(old_track->GetPublicName());
+				new_track->SetLanguage(old_track->GetLanguage());
+				new_track->SetCharacteristics(old_track->GetCharacteristics());
+                _origin_id_track_id_map.emplace(track_id, audio_track_id);
                 UpdateTrack(new_track);
-
-                audio_track_needed = false;
+				
+				if (audio_index + 1 > _channel_info.audio_map.size())
+				{
+                	audio_track_needed = false;
+				}
             }
             else
             {
@@ -1169,18 +1202,6 @@ namespace pvd
             ocst::Orchestrator::GetInstance()->UnmirrorStream(stream_tap);
             return nullptr;
         }
-
-        // If there is no data track, add a dummy data track
-        if (GetFirstTrackByType(cmn::MediaType::Data) == nullptr)
-        {
-			auto data_track = std::make_shared<MediaTrack>();
-			data_track->SetId(kScheduledDataTrackId);
-			data_track->SetMediaType(cmn::MediaType::Data);
-			data_track->SetTimeBase(1, 1000); // Data track time base is always 1/1000 in
-			data_track->SetOriginBitstream(cmn::BitstreamFormat::Unknown);
-			
-			UpdateTrack(data_track);
-		}
 
         if (UpdateStream() == false)
         {

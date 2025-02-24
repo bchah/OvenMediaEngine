@@ -56,13 +56,14 @@ namespace info
 		const std::chrono::system_clock::time_point &GetInputStreamCreatedTime() const;
 		const std::chrono::system_clock::time_point &GetCreatedTime() const;
 
-		void SetPublishedTimeNow();
+		void SetPublishedTime(const std::chrono::system_clock::time_point &time);
 		const std::chrono::system_clock::time_point &GetInputStreamPublishedTime() const;
 		const std::chrono::system_clock::time_point &GetPublishedTime() const;
 
 		uint32_t GetUptimeSec();
 		StreamSourceType GetSourceType() const;
-
+		ProviderType GetProviderType() const;
+		
 		StreamRepresentationType GetRepresentationType() const;
 		void SetRepresentationType(const StreamRepresentationType &type);
 
@@ -86,10 +87,11 @@ namespace info
 		
 		const std::shared_ptr<MediaTrack> GetFirstTrackByType(const cmn::MediaType &type) const;
 		const std::shared_ptr<MediaTrack> GetFirstTrackByVariant(const ov::String &name) const;
+		const std::shared_ptr<MediaTrack> GetTrackByVariant(const ov::String &variant_name, uint32_t order) const;
 
-		bool AddPlaylist(const std::shared_ptr<Playlist> &playlist);
+		bool AddPlaylist(const std::shared_ptr<const Playlist> &playlist);
 		std::shared_ptr<const Playlist> GetPlaylist(const ov::String &file_name) const;
-		const std::map<ov::String, std::shared_ptr<Playlist>> &GetPlaylists() const;
+		const std::map<ov::String, std::shared_ptr<const Playlist>> &GetPlaylists() const;
 
 		ov::String GetInfoString();
 		void ShowInfo();
@@ -104,6 +106,7 @@ namespace info
 		}
 
 		const char *GetApplicationName();
+		const char *GetApplicationName() const;
 
 		bool HasVideoTrack() const
 		{
@@ -118,6 +121,21 @@ namespace info
 		bool IsFromOriginMapStore() const
 		{
 			return _from_origin_map_store;
+		}
+
+		bool IsOnAir() const
+		{
+			return _on_air;
+		}
+
+		void SetOnAir(bool on_air)
+		{
+			_on_air = on_air;
+
+			if (_on_air)
+			{
+				_published_time = std::chrono::system_clock::now();
+			}
 		}
 
 	protected:
@@ -135,7 +153,7 @@ namespace info
 		std::map<ov::String, std::shared_ptr<MediaTrackGroup>> _track_group_map; // Track group
 
 		// File name : Playlist
-		std::map<ov::String, std::shared_ptr<Playlist>> _playlists;
+		std::map<ov::String, std::shared_ptr<const Playlist>> _playlists;
 
 		bool _from_origin_map_store = false;
 
@@ -161,5 +179,7 @@ namespace info
 
 		// If the source if this stream is a remote stream of the origin server, store the uuid of origin stream
 		ov::String _origin_stream_uuid;
+
+		bool _on_air = false;
 	};
 }  // namespace info

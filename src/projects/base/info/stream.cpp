@@ -57,6 +57,8 @@ namespace info
 
 		_playlists = stream._playlists;
 		_representation_type = stream._representation_type;
+
+		_on_air = stream._on_air;
 	}
 
 	Stream::Stream(StreamSourceType source)
@@ -182,9 +184,10 @@ namespace info
 		return _created_time;
 	}
 
-	void Stream::SetPublishedTimeNow()
+	void Stream::SetPublishedTime(const std::chrono::system_clock::time_point &time)
 	{
-		_published_time = std::chrono::system_clock::now();
+		_published_time = time;
+		_on_air = true;
 	}
 
 	const std::chrono::system_clock::time_point &Stream::GetPublishedTime() const
@@ -211,6 +214,11 @@ namespace info
 	StreamSourceType Stream::GetSourceType() const
 	{
 		return _source_type;
+	}
+
+	ProviderType Stream::GetProviderType() const
+	{
+		return ::ProviderTypeFromSourceType(_source_type);
 	}
 
 	StreamRepresentationType Stream::GetRepresentationType() const
@@ -336,12 +344,12 @@ namespace info
 	const std::shared_ptr<MediaTrackGroup> Stream::GetMediaTrackGroup(const ov::String &group_name) const
 	{
 		auto item = _track_group_map.find(group_name);
-		if (item == _track_group_map.end())
+		if (item != _track_group_map.end())
 		{
-			return nullptr;
+			return item->second;
 		}
 
-		return item->second;
+		return nullptr;
 	}
 
 	const std::map<ov::String, std::shared_ptr<MediaTrackGroup>> &Stream::GetMediaTrackGroups() const
@@ -400,6 +408,17 @@ namespace info
 		return group->GetTrack(0);
 	}
 
+	const std::shared_ptr<MediaTrack> Stream::GetTrackByVariant(const ov::String &variant_name, uint32_t order) const
+	{
+		auto group = GetMediaTrackGroup(variant_name);
+		if (group == nullptr || group->GetTrackCount() == 0)
+		{
+			return nullptr;
+		}
+
+		return group->GetTrack(order);
+	}
+
 	const std::shared_ptr<MediaTrack> Stream::GetFirstTrackByType(const cmn::MediaType &type) const
 	{
 		for (auto &item : _tracks)
@@ -418,7 +437,7 @@ namespace info
 		return _tracks;
 	}
 
-	bool Stream::AddPlaylist(const std::shared_ptr<Playlist> &playlist)
+	bool Stream::AddPlaylist(const std::shared_ptr<const Playlist> &playlist)
 	{
 		auto result = _playlists.emplace(playlist->GetFileName(), playlist);
 		return result.second;
@@ -435,7 +454,7 @@ namespace info
 		return item->second;
 	}
 
-	const std::map<ov::String, std::shared_ptr<Playlist>> &Stream::GetPlaylists() const
+	const std::map<ov::String, std::shared_ptr<const Playlist>> &Stream::GetPlaylists() const
 	{
 		return _playlists;
 	}
@@ -448,6 +467,11 @@ namespace info
 		}
 
 		return _app_info->GetVHostAppName().CStr();
+	}
+
+	const char *Stream::GetApplicationName() const
+	{
+		return (_app_info == nullptr) ? "Unknown" : _app_info->GetVHostAppName().CStr();
 	}
 
 	ov::String Stream::GetInfoString()

@@ -80,6 +80,7 @@ $(call add_pkg_config,opus)
 $(call add_pkg_config,libsrtp2)
 $(call add_pkg_config,libpcre2-8)
 $(call add_pkg_config,hiredis)
+$(call add_pkg_config,spdlog)
 
 ifeq ($(call chk_pkg_exist,ffnvcodec),0)
 $(call add_pkg_config,ffnvcodec)
@@ -119,6 +120,10 @@ endif
 ifeq ($(MAKECMDGOALS),release)
 $(call add_pkg_config,jemalloc)
 endif
+
+# Setup flags for spdlog
+LOCAL_CFLAGS += -DSPDLOG_COMPILED_LIB -Iprojects/third_party/spdlog-1.15.1/include
+LOCAL_CXXFLAGS += -DSPDLOG_COMPILED_LIB -Iprojects/third_party/spdlog-1.15.1/include
 
 LOCAL_TARGET := OvenMediaEngine
 

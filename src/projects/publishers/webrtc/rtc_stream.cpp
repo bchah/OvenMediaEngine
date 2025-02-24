@@ -107,6 +107,16 @@ RtcStream::~RtcStream()
 	Stop();
 }
 
+std::shared_ptr<const pub::Stream::DefaultPlaylistInfo> RtcStream::GetDefaultPlaylistInfo() const
+{
+	static auto info = std::make_shared<pub::Stream::DefaultPlaylistInfo>(
+		"webrtc_default",
+		"webrtc_default",
+		"webrtc_default");
+
+	return info;
+}
+
 bool RtcStream::Start()
 {
 	if(GetState() != State::CREATED)
@@ -190,12 +200,15 @@ bool RtcStream::Start()
 	if (webrtc_config.ShouldCreateDefaultPlaylist() == true)
 	{
 		// Create Default Playlist for no file name (ws://domain/app/stream)
-		_default_playlist_name = "webrtc_default";
+		auto default_playlist_info = GetDefaultPlaylistInfo();
+		OV_ASSERT2(default_playlist_info != nullptr);
+
+		_default_playlist_name = default_playlist_info->file_name;
 
 		auto default_playlist = GetPlaylist(_default_playlist_name);
 		if (default_playlist == nullptr)
 		{
-			auto playlist = std::make_shared<info::Playlist>("webrtc_default", _default_playlist_name);
+			auto playlist = std::make_shared<info::Playlist>(default_playlist_info->name, _default_playlist_name, true);
 			auto rendition = std::make_shared<info::Rendition>("default", _first_video_track ? _first_video_track->GetVariantName() : "", _first_audio_track ? _first_audio_track->GetVariantName() : "");
 
 			playlist->AddRendition(rendition);
@@ -330,11 +343,24 @@ std::shared_ptr<RtcMasterPlaylist> RtcStream::CreateRtcMasterPlaylist(const ov::
 
 	for (const auto &rendition : playlist->GetRenditionList())
 	{
-		auto video_track = GetFirstTrackByVariant(rendition->GetVideoVariantName());
-		auto audio_track = GetFirstTrackByVariant(rendition->GetAudioVariantName());
+		auto video_index_hint = rendition->GetVideoIndexHint();
+		if (video_index_hint < 0)
+		{
+			video_index_hint = 0;
+		}
+
+		auto audio_index_hint = rendition->GetAudioIndexHint();
+		if (audio_index_hint < 0)
+		{
+			audio_index_hint = 0;
+		}
+
+		auto video_track = GetTrackByVariant(rendition->GetVideoVariantName(), video_index_hint);
+		auto audio_track = GetTrackByVariant(rendition->GetAudioVariantName(), audio_index_hint);
 
 		if (video_track == nullptr && audio_track == nullptr)
 		{
+			logtw("RtcStream(%s/%s) - Exclude the rendition(%s) from the %s playlist due to no video (index:%d) and audio track (index:%d)", GetApplication()->GetVHostAppName().CStr(), GetName().CStr(), rendition->GetName().CStr(), playlist->GetFileName().CStr(), video_index_hint, audio_index_hint);
 			continue;
 		}
 

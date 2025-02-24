@@ -45,6 +45,7 @@ bool LLHlsMasterPlaylist::AddMediaCandidateGroup(const std::shared_ptr<const Med
 		new_media_info->_type = track->GetMediaType();
 		new_media_info->_name = track->GetPublicName();
 		new_media_info->_language = track->GetLanguage();
+		new_media_info->_characteristics = track->GetCharacteristics();
 		new_media_info->_default = first;
 		new_media_info->_auto_select = first || (track->GetLanguage().IsEmpty() == false);
 		new_media_info->_instream_id = "";
@@ -62,7 +63,7 @@ bool LLHlsMasterPlaylist::AddMediaCandidateGroup(const std::shared_ptr<const Med
 	return true;
 }
 
-bool LLHlsMasterPlaylist::AddStreamInfo(const ov::String &video_group_id, const ov::String &audio_group_id)
+bool LLHlsMasterPlaylist::AddStreamInfo(const ov::String &video_group_id, int video_index_hint, const ov::String &audio_group_id)
 {
 	auto new_stream_info = std::make_shared<StreamInfo>();
 
@@ -70,14 +71,14 @@ bool LLHlsMasterPlaylist::AddStreamInfo(const ov::String &video_group_id, const 
 	if (video_group_id.IsEmpty() == false)
 	{
 		auto video_group = GetMediaGroup(video_group_id);
-		if (video_group == nullptr || video_group->_media_infos.size() < 1)
+		if (video_group == nullptr || video_group->_media_infos.size() <= static_cast<std::size_t>(video_index_hint))
 		{
 			logte("Could not find valid video group: %s", video_group_id.CStr());
 			return false;
 		}
 
 		// first media info is used for stream info
-		new_stream_info->_media_info = video_group->_media_infos[0];
+		new_stream_info->_media_info = video_group->_media_infos[video_index_hint];
 		auto video_track = new_stream_info->_media_info->_track;
 		if (video_track == nullptr)
 		{
@@ -91,12 +92,13 @@ bool LLHlsMasterPlaylist::AddStreamInfo(const ov::String &video_group_id, const 
 		new_stream_info->_framerate = video_track->GetFrameRate();
 		new_stream_info->_codecs = video_track->GetCodecsParameter();
 
+		// 25-01-27 : Video group is not used now
 		// Active media group if video group has more than 1 media info
-		if (video_group->_media_infos.size() > 1)
-		{
-			video_group->_used = true;
-			new_stream_info->_video_group_id = video_group_id;
-		}
+		// if (video_group->_media_infos.size() > 1)
+		// {
+		// 	video_group->_used = true;
+		// 	new_stream_info->_video_group_id = video_group_id;
+		// }
 
 		if (audio_group_id.IsEmpty() == false)
 		{
@@ -287,6 +289,11 @@ ov::String LLHlsMasterPlaylist::MakePlaylist(const ov::String &chunk_query_strin
 			if (!media_info->_language.IsEmpty())
 			{
 				playlist.AppendFormat(",LANGUAGE=\"%s\"", media_info->_language.CStr());
+			}
+
+			if (!media_info->_characteristics.IsEmpty())
+			{
+				playlist.AppendFormat(",CHARACTERISTICS=\"%s\"", media_info->_characteristics.CStr());
 			}
 
 			if (!media_info->_instream_id.IsEmpty())

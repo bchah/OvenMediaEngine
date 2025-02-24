@@ -7,6 +7,7 @@ on:
     paths-ignore:
       - 'dist/**'
       - 'docs/**'
+      - '**.md'
   workflow_dispatch:
 
 concurrency:
@@ -19,7 +20,7 @@ env:
 jobs:
   push_to_registry:
     name: Push Docker image to Docker Hub
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     permissions:
       packages: write
       contents: read
@@ -42,6 +43,9 @@ jobs:
         
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
+        with:
+          # https://github.com/docker/setup-qemu-action/issues/198
+          image: tonistiigi/binfmt:qemu-v7.0.0-28
         
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -54,7 +58,7 @@ jobs:
 
       - name: Build and push
         id: push
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile

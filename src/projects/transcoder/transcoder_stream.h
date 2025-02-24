@@ -23,10 +23,13 @@
 #include "transcoder_encoder.h"
 #include "transcoder_filter.h"
 #include "transcoder_stream_internal.h"
+#include "transcoder_events.h"
 
 class TranscodeApplication;
 
-class TranscoderStream : public ov::EnableSharedFromThis<TranscoderStream>, public TranscoderStreamInternal
+class TranscoderStream : public ov::EnableSharedFromThis<TranscoderStream>,
+						 public TranscoderStreamInternal,
+						 public TranscoderEvents
 {
 public:
 	class CompositeContext
@@ -236,8 +239,11 @@ private:
 	std::optional<std::pair<std::shared_ptr<TranscodeFilter>, std::shared_ptr<TranscodeEncoder>>> GetEncoder(MediaTrackId encoder_id);
 	void SetEncoder(MediaTrackId encoder_id, std::shared_ptr<TranscodeFilter> filter, std::shared_ptr<TranscodeEncoder> encoder);
 	void RemoveEncoders();
-	
+
+	void ProcessPacket(const std::shared_ptr<MediaPacket> &packet);
+
 	// Step 1: Decode (Decode a frame from given packets)
+	void BypassPacket(const std::shared_ptr<MediaPacket> &packet);	
 	void DecodePacket(const std::shared_ptr<MediaPacket> &packet);
 	void OnDecodedFrame(TranscodeResult result, MediaTrackId decoder_id, std::shared_ptr<MediaFrame> decoded_frame);
 	void SetLastDecodedFrame(MediaTrackId decoder_id, std::shared_ptr<MediaFrame> &decoded_frame);
@@ -248,7 +254,8 @@ private:
 	void UpdateInputTrack(std::shared_ptr<MediaFrame> buffer);
 	void UpdateOutputTrack(std::shared_ptr<MediaFrame> buffer);
 	void UpdateMsidOfOutputStreams(uint32_t msid);
-	bool IsAvailableSmoothTransition(const std::shared_ptr<info::Stream> &stream);
+	bool CanSeamlessTransition(const std::shared_ptr<info::Stream> &stream);
+	void FlushBuffers();
 
 	// Step 2: Filter (resample/rescale the decoded frame)
 	void SpreadToFilters(MediaTrackId decoder_id, std::shared_ptr<MediaFrame> frame);
@@ -265,11 +272,13 @@ private:
 	// Send encoded packet to mediarouter via transcoder application
 	void SendFrame(std::shared_ptr<info::Stream> &stream, std::shared_ptr<MediaPacket> packet);
 
-
+	ov::String MakeRenditionName(const ov::String &name_template, const std::shared_ptr<info::Playlist> &playlist_info, const std::shared_ptr<MediaTrack> &video_track, const std::shared_ptr<MediaTrack> &audio_track);
 
 private:
 	// Initial buffer for ready to stream
 	void BufferMediaPacketUntilReadyToPlay(const std::shared_ptr<MediaPacket> &media_packet);
 	bool SendBufferedPackets();
 	ov::Queue<std::shared_ptr<MediaPacket>> _initial_media_packet_buffer;
+
+	std::atomic<bool> _is_updating = false;
 };

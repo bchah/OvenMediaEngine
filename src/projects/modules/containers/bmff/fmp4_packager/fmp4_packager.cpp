@@ -16,6 +16,8 @@
 #include <modules/data_format/id3v2/id3v2.h>
 #include <modules/data_format/id3v2/frames/id3v2_text_frame.h>
 
+#include <modules/data_format/cue_event/cue_event.h>
+
 namespace bmff
 {
 	FMP4Packager::FMP4Packager(const std::shared_ptr<FMP4Storage> &storage, const std::shared_ptr<const MediaTrack> &media_track, const std::shared_ptr<const MediaTrack> &data_track, const Config &config)
@@ -159,6 +161,17 @@ namespace bmff
 
 		if (samples != nullptr && samples->GetTotalCount() > 0)
 		{
+			// If the CUE-OUT/IN event is included in the samples time range, flush the samples as soon as possible.
+			// samples->GetStartTimestamp() <= CUE events < samples->GetEndTimestamp()
+			
+			if (_force_segment_flush == false && HasMarker(samples->GetEndTimestamp()))
+			{
+				auto marker = GetFirstMarker();
+
+				logti("track(%d) - Force segment flush, has marker (start: %lld, marker:%lld (%s) end: %lld)", GetMediaTrack()->GetId(), samples->GetStartTimestamp(), marker.timestamp, marker.tag.CStr(), samples->GetEndTimestamp());
+				_force_segment_flush = true;
+			}
+
 			bool next_frame_is_idr = (next_frame->GetFlag() == MediaPacketFlag::Key) || (GetMediaTrack()->GetMediaType() == cmn::MediaType::Audio);
 
 			// Calculate duration as milliseconds
@@ -175,30 +188,36 @@ namespace bmff
 			// and the final Partial Segment of any Parent Segment.
 
 			auto last_segment = _storage->GetLastSegment();
-			bool is_last_partial_segment = false;
+			auto last_segment_duration = 0; 
 			if (last_segment != nullptr && last_segment->IsCompleted() == false)
 			{
-				// https://datatracker.ietf.org/doc/html/draft-pantos-hls-rfc8216bis#section-4.4.4.9
-				// The duration of a Partial Segment MUST be less than or equal to the
-				// Part Target Duration.  The duration of each Partial Segment MUST be
-				// at least 85% of the Part Target Duration, with the exception of
-				// Partial Segments with the INDEPENDENT=YES attribute and the final
-				// Partial Segment of any Parent Segment.
-				if (total_sample_duration_ms + last_segment->GetDuration() >= _storage->GetTargetSegmentDuration())
-				{
-					// Last partial segment
-					is_last_partial_segment = true;
-				}
+				last_segment_duration = last_segment->GetDuration();
+			}
+			bool is_last_partial_segment = false;
+			// https://datatracker.ietf.org/doc/html/draft-pantos-hls-rfc8216bis#section-4.4.4.9
+			// The duration of a Partial Segment MUST be less than or equal to the
+			// Part Target Duration.  The duration of each Partial Segment MUST be
+			// at least 85% of the Part Target Duration, with the exception of
+			// Partial Segments with the INDEPENDENT=YES attribute and the final
+			// Partial Segment of any Parent Segment.
+			if ((total_sample_duration_ms + last_segment_duration >= _storage->GetTargetSegmentDuration()) ||
+				// Video && next_frame_is_idr && force_segment_flush
+				(GetMediaTrack()->GetMediaType() == cmn::MediaType::Video && next_frame_is_idr && _force_segment_flush) || 
+				// Audio && force_segment_flush
+				(GetMediaTrack()->GetMediaType() == cmn::MediaType::Audio && _force_segment_flush))
+			{
+				// Last partial segment
+				is_last_partial_segment = true;
 			}
 
-			logtd("track(%d), total_sample_duration_ms: %lf, next_total_sample_duration_ms: %lf, target_chunk_duration_ms: %lf, next_frame_is_idr: %d, is_last_partial_segment: %d last_segment_duration: %lf, target_segment_duration: %lld", GetMediaTrack()->GetId(), total_sample_duration_ms, next_total_sample_duration_ms, _target_chunk_duration_ms, next_frame_is_idr, is_last_partial_segment, last_segment != nullptr ? last_segment->GetDuration() : -1, _storage->GetTargetSegmentDuration());
+			logtd("track(%d), total_sample_duration_ms: %lf, next_total_sample_duration_ms: %lf, target_chunk_duration_ms: %lf, next_frame_is_idr: %d, is_last_partial_segment: %d last_segment_duration: %lf, target_segment_duration: %f", GetMediaTrack()->GetId(), total_sample_duration_ms, next_total_sample_duration_ms, _target_chunk_duration_ms, next_frame_is_idr, is_last_partial_segment, last_segment != nullptr ? last_segment->GetDuration() : -1, _storage->GetTargetSegmentDuration());
 
 			// - In the last partial segment, if the next frame is a keyframe, a segment is created immediately. This allows the segment to start with a keyframe.
 			// - When adding samples, if the Part Target Duration is exceeded, a chunk is created immediately.
 			// - If it exceeds 85% and the next sample is independent, a chunk is created. This makes the next chunk start independent.
 			if ( 
 				   (is_last_partial_segment == true && GetMediaTrack()->GetMediaType() == cmn::MediaType::Video && 
-					next_frame->GetFlag() == MediaPacketFlag::Key)
+				   next_frame_is_idr == true)
 				
 				|| (is_last_partial_segment == true && GetMediaTrack()->GetMediaType() == cmn::MediaType::Audio)
 
@@ -208,6 +227,8 @@ namespace bmff
 				)
 			{
 				double reserve_buffer_size;
+
+				_force_segment_flush = _force_segment_flush && is_last_partial_segment && next_frame_is_idr ? false : _force_segment_flush;
 				
 				if (GetMediaTrack()->GetMediaType() == cmn::MediaType::Video)
 				{
@@ -245,10 +266,35 @@ namespace bmff
 
 				auto chunk = chunk_stream.GetDataPointer();
 
+				std::vector<Marker> markers = PopMarkers(samples->GetEndTimestamp());
+				if (markers.empty() == false)
+				{
+					// If the last marker is a cue-out marker, insert a cue-in marker automatically after duration of cue-out marker
+					auto last_marker = markers.back();
+					auto next_marker = GetFirstMarker();
+					if (last_marker.tag.UpperCaseString() == "CUEEVENT-OUT" && next_marker.tag.UpperCaseString() != "CUEEVENT-IN")
+					{
+						auto cue_out_event = CueEvent::Parse(last_marker.data);
+						if (cue_out_event != nullptr)
+						{
+							auto duration_msec = cue_out_event->GetDurationMsec();
+							auto main_track = GetMediaTrack();
+							int64_t cue_in_timestamp = (samples->GetEndTimestamp() - 1) + (static_cast<double>(duration_msec) / 1000.0 * main_track->GetTimeBase().GetTimescale());
+
+							Marker cue_in_marker;
+							cue_in_marker.timestamp = cue_in_timestamp;
+							cue_in_marker.tag = "CueEvent-IN";
+							cue_in_marker.data = CueEvent::Create(CueEvent::CueType::IN, 0)->Serialize();
+
+							InsertMarker(cue_in_marker);
+						}
+					}
+				}
+
 				if (_storage != nullptr && _storage->AppendMediaChunk(chunk, 
 												samples->GetStartTimestamp(), 
 												total_sample_duration_ms, 
-												samples->IsIndependent(), (is_last_partial_segment && next_frame_is_idr)) == false)
+												samples->IsIndependent(), (is_last_partial_segment && next_frame_is_idr), markers) == false)
 				{
 					logte("FMP4Packager::AppendSample() - Failed to store media chunk");
 					return false;

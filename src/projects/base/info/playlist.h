@@ -38,6 +38,26 @@ namespace info
 			return _audio_variant_name;
 		}
 
+		void SetVideoIndexHint(int index)
+		{
+			_video_index_hint = index;
+		}
+
+		int GetVideoIndexHint() const
+		{
+			return _video_index_hint;
+		}
+
+		void SetAudioIndexHint(int index)
+		{
+			_audio_index_hint = index;
+		}
+
+		int GetAudioIndexHint() const
+		{
+			return _audio_index_hint;
+		}
+
 		// equals operator
 		bool operator==(const Rendition &rhs) const
 		{
@@ -68,16 +88,19 @@ namespace info
 	private:
 		ov::String _name;
 		ov::String _video_variant_name;
+		int _video_index_hint = -1;
 		ov::String _audio_variant_name;
+		int _audio_index_hint = -1;
 	};
 
 	class Playlist
 	{
 	public:
-		Playlist(const ov::String &name, const ov::String &file_name)
+		Playlist(const ov::String &name, const ov::String &file_name, bool is_default)
 		{
 			_name = name;
 			_file_name = file_name;
+			_is_default = is_default;
 		}
 		~Playlist() = default;
 
@@ -86,6 +109,7 @@ namespace info
 		{
 			_name = other._name;
 			_file_name = other._file_name;
+			_is_default = other._is_default;
 			_webrtc_auto_abr = other._webrtc_auto_abr;
 			_hls_chunklist_path_depth = other._hls_chunklist_path_depth;
 			_enable_ts_packaging = other._enable_ts_packaging;
@@ -94,6 +118,26 @@ namespace info
 			{
 				_renditions.push_back(std::make_shared<Rendition>(*rendition));
 			}
+		}
+
+		ov::String ToString() const
+		{
+			ov::String out_str = ov::String::FormatString("Playlist(%s) : %s\n", _name.CStr(), _file_name.CStr());
+			out_str.AppendFormat("\tDefault : %s\n", _is_default ? "true" : "false");
+			out_str.AppendFormat("\tWebRTC Auto ABR : %s\n", _webrtc_auto_abr ? "true" : "false");
+			out_str.AppendFormat("\tHLS Chunklist Path Depth : %d\n", _hls_chunklist_path_depth);
+			out_str.AppendFormat("\tTS Packaging : %s\n", _enable_ts_packaging ? "true" : "false");
+
+			for (auto &rendition : _renditions)
+			{
+				out_str.AppendFormat("\t%s\n", rendition->GetName().CStr());
+				out_str.AppendFormat("\t\tVideo Variant : %s\n", rendition->GetVideoVariantName().CStr());
+				out_str.AppendFormat("\t\tVideo Index Hint : %d\n", rendition->GetVideoIndexHint());
+				out_str.AppendFormat("\t\tAudio Variant : %s\n", rendition->GetAudioVariantName().CStr());
+				out_str.AppendFormat("\t\tAudio Index Hint : %d\n", rendition->GetAudioIndexHint());
+			}
+
+			return out_str;
 		}
 
 		void SetWebRtcAutoAbr(bool enabled)
@@ -143,6 +187,25 @@ namespace info
 			return _file_name;
 		}
 
+		bool IsDefault() const
+		{
+			return _is_default;
+		}
+		
+		// Get Rendition by name
+		std::shared_ptr<Rendition> GetRendition(const ov::String &name) const
+		{
+			for (auto &rendition : _renditions)
+			{
+				if (rendition->GetName() == name)
+				{
+					return rendition;
+				}
+			}
+
+			return nullptr;
+		}
+
 		// Get Rendition List
 		const std::vector<std::shared_ptr<Rendition>> &GetRenditionList() const
 		{
@@ -158,6 +221,11 @@ namespace info
 			}
 
 			if (_file_name != rhs._file_name)
+			{
+				return false;
+			}
+
+			if (_is_default != rhs._is_default)
 			{
 				return false;
 			}
@@ -202,6 +270,8 @@ namespace info
 	private:
 		ov::String _name;
 		ov::String _file_name;
+
+		bool _is_default = false;
 
 		bool _webrtc_auto_abr = false;
 		int _hls_chunklist_path_depth = -1;

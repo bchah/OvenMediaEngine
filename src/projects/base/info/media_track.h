@@ -55,6 +55,10 @@ public:
 	void SetVariantName(const ov::String &name);
 	ov::String GetVariantName() const;
 
+	// Group Index (used for rendition of playlist)
+	void SetGroupIndex(int index);
+	int GetGroupIndex() const;
+
 	// Public Name (used for multiple audio/video tracks. e.g. multilingual audio)
 	void SetPublicName(const ov::String &name);
 	ov::String GetPublicName() const;
@@ -62,6 +66,10 @@ public:
 	// Language (rfc5646)
 	void SetLanguage(const ov::String &language);
 	ov::String GetLanguage() const;
+
+	// Characteristics (e.g. "main", "sign", "visually-impaired")
+	void SetCharacteristics(const ov::String &characteristics);
+	ov::String GetCharacteristics() const;
 
 	// Media Type 
 	void SetMediaType(cmn::MediaType type);
@@ -142,10 +150,12 @@ protected:
 	// Variant Name : Original encoder profile that made this track 
 	// from <OutputProfile><Encodes>(<Video> || <Audio> || <Image>)<Name>
 	ov::String _variant_name;
+	int _group_index = -1;
 
 	// Set by AudioMap or VideoMap
 	ov::String _public_name;
 	ov::String _language;
+	ov::String _characteristics;
 
 	// Bitstream format 
 	cmn::BitstreamFormat _origin_bitstream_format = cmn::BitstreamFormat::Unknown;

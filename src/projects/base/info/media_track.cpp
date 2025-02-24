@@ -54,6 +54,11 @@ bool MediaTrack::Update(const MediaTrack &media_track)
 	_codec_id = media_track._codec_id;
 	_codec_module_id = media_track._codec_module_id;
 
+	_public_name = media_track._public_name;
+	_variant_name = media_track._variant_name;
+	_language = media_track._language;
+	_characteristics = media_track._characteristics;
+
 	// Video
 	_framerate = media_track._framerate;
 	_framerate_conf = media_track._framerate_conf;
@@ -113,6 +118,16 @@ ov::String MediaTrack::GetVariantName() const
 	return _variant_name;
 }
 
+void MediaTrack::SetGroupIndex(int index)
+{
+	_group_index = index;
+}
+
+int MediaTrack::GetGroupIndex() const
+{
+	return _group_index;
+}
+
 // Public Name (used for multiple audio/video tracks. e.g. multilingual audio)
 void MediaTrack::SetPublicName(const ov::String &name)
 {
@@ -131,6 +146,17 @@ void MediaTrack::SetLanguage(const ov::String &language)
 ov::String MediaTrack::GetLanguage() const
 {
 	return _language;
+}
+
+// Characteristics (e.g. "main", "sign", "visually-impaired")
+void MediaTrack::SetCharacteristics(const ov::String &characteristics)
+{
+	_characteristics = characteristics;
+}
+
+ov::String MediaTrack::GetCharacteristics() const
+{
+	return _characteristics;
 }
 
 void MediaTrack::SetMediaType(MediaType type)

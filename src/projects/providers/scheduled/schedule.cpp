@@ -141,6 +141,64 @@ namespace pvd
 
 		_stream = MakeStream(name, bypass_transcoder, video_track, audio_track);
 
+		// audioMap
+
+		/*
+			"audioMap": [
+				{
+					"name": "Korean",
+					"language": "kor"
+				},
+				{
+					"name": "English",
+					"language": "eng"
+				}
+			]
+
+			for (uint32_t i=0; i<programs_object.size(); i++)
+			{
+				auto program_object = programs_object[i];
+		
+		*/
+
+		auto audio_map_object = stream_object["audioMap"];
+		if (audio_map_object.isNull() == false)
+		{
+			if (audio_map_object.isArray() == false)
+			{
+				_last_error = "audioMap must be an array";
+				return false;
+			}
+
+			for (uint32_t i=0; i<audio_map_object.size(); i++)
+			{
+				auto audio_map_item_object = audio_map_object[i];
+				ov::String public_name;
+				ov::String language;
+				ov::String characteristics;
+				
+				auto public_name_object = audio_map_item_object["name"];
+				if (public_name_object.isNull() == false || public_name_object.isString() == true)
+				{
+					public_name = public_name_object.asString().c_str();
+				}
+
+				auto language_object = audio_map_item_object["language"];
+				if (language_object.isNull() == false || language_object.isString() == true)
+				{
+					language = language_object.asString().c_str();
+				}
+
+				auto characteristics_object = audio_map_item_object["characteristics"];
+				if (characteristics_object.isNull() == false || characteristics_object.isString() == true)
+				{
+					characteristics = characteristics_object.asString().c_str();
+				}
+
+				_stream.audio_map.push_back({static_cast<int>(i), public_name, language, characteristics});
+			}
+		}
+
 		return true;
 	}
 
@@ -421,6 +479,49 @@ namespace pvd
 		}
 
 		_stream = MakeStream(name, bypass_transcoder, video_track, audio_track);
+
+		// Optional
+		/*
+			<AudioMap>
+				<Item>
+					<Name>Korean</Name>
+					<Language>kor</Language>
+				</Item>
+				<Item>
+					<Name>English</Name>
+					<Language>eng</Language>
+				</Item>
+			</AudioMap>
+		*/
+		auto audio_map_node = stream_node.child("AudioMap");
+		uint32_t index = 0;
+		for (auto audio_map_item_node = audio_map_node.child("Item"); audio_map_item_node; audio_map_item_node = audio_map_item_node.next_sibling("Item"))
+		{
+			ov::String public_name;
+			ov::String language;
+			ov::String characteristics;
+
+			auto public_name_node = audio_map_item_node.child("Name");
+			if (public_name_node)
+			{
+				public_name = public_name_node.text().as_string();
+			}
+
+			auto language_node = audio_map_item_node.child("Language");
+			if (language_node)
+			{
+				language = language_node.text().as_string();
+			}
+
+			auto characteristics_node = audio_map_item_node.child("Characteristics");
+			if (characteristics_node)
+			{
+				characteristics = characteristics_node.text().as_string();
+			}
+
+			_stream.audio_map.push_back({static_cast<int>(index), public_name, language, characteristics});
+			index ++;
+		}
 
 		return true;
 	}
@@ -748,6 +849,16 @@ namespace pvd
 		stream_node.append_child("BypassTranscoder").text().set(_stream.bypass_transcoder);
 		stream_node.append_child("VideoTrack").text().set(_stream.video_track);
 		stream_node.append_child("AudioTrack").text().set(_stream.audio_track);
+		
+		// AudioMap
+		stream_node.append_child("AudioMap");
+		for (const auto &audio_map_item : _stream.audio_map)
+		{
+			auto audio_map_item_node = stream_node.child("AudioMap").append_child("Item");
+			audio_map_item_node.append_child("Name").text().set(audio_map_item.GetName().CStr());
+			audio_map_item_node.append_child("Language").text().set(audio_map_item.GetLanguage().CStr());
+			audio_map_item_node.append_child("Characteristics").text().set(audio_map_item.GetCharacteristics().CStr());
+		}
 
 		// FallbackProgram
 		if (_fallback_program != nullptr)
@@ -804,6 +915,17 @@ namespace pvd
 		stream_object["bypassTranscoder"] = _stream.bypass_transcoder;
 		stream_object["videoTrack"] = _stream.video_track;
 		stream_object["audioTrack"] = _stream.audio_track;
+		// audio map
+		Json::Value audio_map_object;
+		for (const auto &audio_map_item : _stream.audio_map)
+		{
+			Json::Value audio_map_item_object;
+			audio_map_item_object["name"] = audio_map_item.GetName().CStr();
+			audio_map_item_object["language"] = audio_map_item.GetLanguage().CStr();
+			audio_map_item_object["characteristics"] = audio_map_item.GetCharacteristics().CStr();
+			audio_map_object.append(audio_map_item_object);
+		}
+		stream_object["audioMap"] = audio_map_object;
 
 		root_object["stream"] = stream_object;
 

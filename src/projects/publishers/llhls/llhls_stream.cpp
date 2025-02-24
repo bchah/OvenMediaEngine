@@ -9,16 +9,17 @@
 #include "llhls_stream.h"
 
 #include <base/ovlibrary/hex.h>
+#include <base/publisher/application.h>
+#include <base/publisher/stream.h>
 #include <config/config_manager.h>
 
 #include <pugixml-1.9/src/pugixml.hpp>
 
-#include <base/publisher/application.h>
-#include <base/publisher/stream.h>
+#include <modules/data_format/cue_event/cue_event.h>
 
 #include "llhls_application.h"
-#include "llhls_session.h"
 #include "llhls_private.h"
+#include "llhls_session.h"
 
 std::shared_ptr<LLHlsStream> LLHlsStream::Create(const std::shared_ptr<pub::Application> application, const info::Stream &info, uint32_t worker_count)
 {
@@ -39,6 +40,21 @@ LLHlsStream::~LLHlsStream()
 ov::String LLHlsStream::GetStreamId() const
 {
 	return ov::String::FormatString("llhls/%s", GetUri().CStr());
+}
+
+std::shared_ptr<const pub::Stream::DefaultPlaylistInfo> LLHlsStream::GetDefaultPlaylistInfo() const
+{
+	static auto info = []() -> std::shared_ptr<const pub::Stream::DefaultPlaylistInfo> {
+		ov::String file_name = "llhls.m3u8";
+		auto file_name_without_ext = file_name.Substring(0, file_name.IndexOfRev('.'));
+
+		return std::make_shared<const pub::Stream::DefaultPlaylistInfo>(
+			"llhls_default",
+			file_name_without_ext,
+			file_name);
+	}();
+
+	return info;
 }
 
 bool LLHlsStream::Start()
@@ -150,12 +166,13 @@ bool LLHlsStream::Start()
 	{
 		// If there is no default playlist, make default playlist
 		// Default playlist is consist of first compatible video and audio track among all tracks
-		ov::String default_playlist_name = DEFAULT_PLAYLIST_NAME;
-		auto default_playlist_name_without_ext = default_playlist_name.Substring(0, default_playlist_name.IndexOfRev('.'));
-		auto default_playlist = Stream::GetPlaylist(default_playlist_name_without_ext);
+		auto default_playlist_info = GetDefaultPlaylistInfo();
+		OV_ASSERT2(default_playlist_info != nullptr);
+
+		auto default_playlist = Stream::GetPlaylist(default_playlist_info->file_name);
 		if (default_playlist == nullptr)
 		{
-			auto playlist = std::make_shared<info::Playlist>("llhls_default", default_playlist_name_without_ext);
+			auto playlist = std::make_shared<info::Playlist>(default_playlist_info->name, default_playlist_info->file_name, true);
 			auto rendition = std::make_shared<info::Rendition>("default", first_video_track ? first_video_track->GetVariantName() : "", first_audio_track ? first_audio_track->GetVariantName() : "");
 
 			playlist->AddRendition(rendition);
@@ -165,7 +182,7 @@ bool LLHlsStream::Start()
 			auto master_playlist = CreateMasterPlaylist(playlist);
 
 			std::lock_guard<std::mutex> guard(_master_playlists_lock);
-			_master_playlists[default_playlist_name] = master_playlist;
+			_master_playlists[default_playlist_info->internal_file_name] = master_playlist;
 		}
 	}
 	else
@@ -540,7 +557,14 @@ std::shared_ptr<LLHlsMasterPlaylist> LLHlsStream::CreateMasterPlaylist(const std
 	// Add stream
 	for (const auto &rendition : playlist->GetRenditionList())
 	{
+		auto video_index_hint = rendition->GetVideoIndexHint();
+		if (video_index_hint < 0)
+		{
+			video_index_hint = 0;
+		}
 		auto video_track = GetFirstTrackByVariant(rendition->GetVideoVariantName());
+
+		// LLHLS Audio does not use audio_index_hint because it has multilingual support
 		auto audio_track = GetFirstTrackByVariant(rendition->GetAudioVariantName());
 
 		if ((video_track != nullptr && IsSupportedCodec(video_track->GetCodecId()) == false) ||
@@ -565,7 +589,7 @@ std::shared_ptr<LLHlsMasterPlaylist> LLHlsStream::CreateMasterPlaylist(const std
 			logtw("LLHlsStream(%s/%s) - %s audio is excluded from the %s rendition in %s playlist because there is no audio track.", GetApplication()->GetVHostAppName().CStr(), GetName().CStr(), rendition->GetAudioVariantName().CStr(), rendition->GetName().CStr(), playlist->GetFileName().CStr());
 		}
 
-		master_playlist->AddStreamInfo(video_variant_name, audio_variant_name);
+		master_playlist->AddStreamInfo(video_variant_name, video_index_hint, audio_variant_name);
 	}
 
 	master_playlist->UpdateCacheForDefaultPlaylist();
@@ -993,15 +1017,16 @@ void LLHlsStream::SendAudioFrame(const std::shared_ptr<MediaPacket> &media_packe
 
 void LLHlsStream::SendDataFrame(const std::shared_ptr<MediaPacket> &media_packet)
 {
-	if (media_packet->GetBitstreamFormat() != cmn::BitstreamFormat::ID3v2)
-	{
-		// Not supported
-		return;
-	}
-
 	if (GetState() == State::CREATED)
 	{
 		BufferMediaPacketUntilReadyToPlay(media_packet);
+		return;
+	}
+
+	auto data_track = GetTrack(media_packet->GetTrackId());
+	if (data_track == nullptr)
+	{
+		logtw("Could not find track. id: %d", media_packet->GetTrackId());
 		return;
 	}
 
@@ -1010,27 +1035,70 @@ void LLHlsStream::SendDataFrame(const std::shared_ptr<MediaPacket> &media_packet
 		SendBufferedPackets();
 	}
 
-	auto target_media_type = (media_packet->GetPacketType() == cmn::PacketType::VIDEO_EVENT) ? cmn::MediaType::Video : cmn::MediaType::Audio;
-
-	for (const auto &it : GetTracks())
+	if (media_packet->GetBitstreamFormat() == cmn::BitstreamFormat::ID3v2)
 	{
-		auto track = it.second;
+		auto target_media_type = (media_packet->GetPacketType() == cmn::PacketType::VIDEO_EVENT) ? cmn::MediaType::Video : cmn::MediaType::Audio;
 
-		if (media_packet->GetPacketType() != cmn::PacketType::EVENT && track->GetMediaType() != target_media_type)
+		for (const auto &it : GetTracks())
 		{
-			continue;
-		}
+			auto track = it.second;
+			if (media_packet->GetPacketType() != cmn::PacketType::EVENT && track->GetMediaType() != target_media_type)
+			{
+				continue;
+			}
 
-		// Get Packager
-		auto packager = GetPackager(track->GetId());
-		if (packager == nullptr)
+			// Get Packager
+			auto packager = GetPackager(track->GetId());
+			if (packager == nullptr)
+			{
+				logtd("Could not find packager. track id: %d", track->GetId());
+				continue;
+			}
+			logtd("AppendSample : track(%d) length(%d)", media_packet->GetTrackId(), media_packet->GetDataLength());
+
+			packager->ReserveDataPacket(media_packet);
+		}
+	}
+	else if (media_packet->GetBitstreamFormat() == cmn::BitstreamFormat::CUE)
+	{
+		// Insert marker to all packagers
+		for (const auto &it : GetTracks())
 		{
-			logtd("Could not find packager. track id: %d", track->GetId());
-			continue;
-		}
-		logtd("AppendSample : track(%d) length(%d)", media_packet->GetTrackId(), media_packet->GetDataLength());
+			auto track = it.second;
+			// Only video and audio tracks are supported
+			if (track->GetMediaType() != cmn::MediaType::Video && track->GetMediaType() != cmn::MediaType::Audio)
+			{
+				continue;
+			}
 
-		packager->ReserveDataPacket(media_packet);
+			// Get Packager
+			auto packager = GetPackager(track->GetId());
+			if (packager == nullptr)
+			{
+				logtd("Could not find packager. track id: %d", track->GetId());
+				continue;
+			}
+
+			Marker marker;
+			marker.timestamp = static_cast<double>(media_packet->GetDts()) / data_track->GetTimeBase().GetTimescale() * track->GetTimeBase().GetTimescale();
+			marker.data = media_packet->GetData()->Clone();
+	
+			// Parse the cue data
+			auto cue_event = CueEvent::Parse(marker.data);
+			if (cue_event == nullptr)
+			{
+				logte("(%s/%s) Failed to parse the cue event data", GetApplication()->GetVHostAppName().CStr(), GetName().CStr());
+				return;
+			}
+	
+			marker.tag = ov::String::FormatString("CueEvent-%s", cue_event->GetCueTypeName().CStr());
+
+			auto result = packager->InsertMarker(marker);
+			if (result == false)
+			{
+				logte("Failed to insert marker (timestamp: %lld, tag: %s)", marker.timestamp, marker.tag.CStr());
+			}
+		}
 	}
 }
 
@@ -1452,6 +1520,21 @@ void LLHlsStream::OnMediaChunkUpdated(const int32_t &track_id, const uint32_t &s
 												  GetPartialSegmentName(track_id, segment_number, chunk->GetNumber()),
 												  GetNextPartialSegmentName(track_id, segment_number, chunk->GetNumber(), last_chunk),
 												  chunk->IsIndependent(), last_chunk);
+
+	// Set markers
+	auto segment = storage->GetMediaSegment(segment_number);
+	if (segment != nullptr)
+	{
+		if (segment->HasMarker() == true)
+		{
+			logti("Media chunk has markers : track_id = %d, segment_number = %d, chunk_number = %d", track_id, segment_number, chunk_number);
+			for (const auto &marker : segment->GetMarkers())
+			{
+				logti("Marker : timestamp = %lld, tag = %s", marker.timestamp, marker.tag.CStr());
+			}
+			chunk_info.SetMarkers(segment->GetMarkers());
+		}
+	}
 
 	playlist->AppendPartialSegmentInfo(segment_number, chunk_info);
 

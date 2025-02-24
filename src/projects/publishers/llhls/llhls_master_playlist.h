@@ -22,7 +22,7 @@ public:
 	void SetCencProperty(const bmff::CencProperty &cenc_property);
 
 	bool AddMediaCandidateGroup(const std::shared_ptr<const MediaTrackGroup> &track_group, std::function<ov::String(const std::shared_ptr<const MediaTrack> &track)> chunk_uri_generator);
-	bool AddStreamInfo(const ov::String &video_group_id, const ov::String &audio_group_id);
+	bool AddStreamInfo(const ov::String &video_group_id, int video_index_hint, const ov::String &audio_group_id);
 
 	void UpdateCacheForDefaultPlaylist();
 
@@ -49,6 +49,7 @@ private:
 		cmn::MediaType _type = cmn::MediaType::Unknown; // Required
 		ov::String _name; // Required
 		ov::String _language; // Optional
+		ov::String _characteristics; // Optional
 		bool _auto_select = true; // Optional
 		bool _default = false; // Optional
 		ov::String _instream_id; // Required for closed captions
